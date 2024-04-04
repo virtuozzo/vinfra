@@ -1,6 +1,6 @@
 ## Vinfra
 
-`vinfra` - A command line tool used to manage Acronis Cyber Infrastructure (ACI) or Virtuozzo Hybrid Infrastructure (VHI).
+`vinfra` - A command line tool used to manage Virtuozzo Hybrid Infrastructure (VHI).
 
 *Install from the current sources*:
 
