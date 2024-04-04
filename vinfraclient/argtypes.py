@@ -26,6 +26,22 @@ def parse_dict_options(value, optional_keys=None):
     return res
 
 
+def parse_dict_options_with_commas(value):
+    res = {}
+    prev_key = None
+    for arg in value.split(','):
+        msg = "{!r} is not a 'key=value' pair".format(arg)
+        if '=' not in arg or arg.startswith('='):
+            if prev_key is None:
+                raise argparse.ArgumentTypeError(msg)
+            res[prev_key] = '{},{}'.format(res[prev_key], arg)
+            continue
+        key, val = arg.split('=', 1)
+        res[key] = val
+        prev_key = key
+    return res
+
+
 def parse_pair_options(value):
     res = []
     for arg in value.split(','):
@@ -38,6 +54,17 @@ def parse_pair_options(value):
             raise argparse.ArgumentTypeError(msg)
         res.append((key, val))
     return res
+
+
+def parse_pair_option(value):
+    msg = "{!r} is not a 'key=value' pair".format(value)
+    try:
+        key, val = value.split('=', 1)
+        if not val:
+            raise argparse.ArgumentTypeError(msg)
+    except ValueError:
+        raise argparse.ArgumentTypeError(msg)
+    return (key, value)
 
 
 def parse_list_options(value):

@@ -1,4 +1,5 @@
 import os
+import sys
 
 from vinfraclient import exceptions
 from vinfraclient.cmd.abgw import get_reg_password, ensure_abgw_exists
@@ -84,6 +85,9 @@ class GeoReplicationPrimaryDownloadConfigs(ShowOne):
     def do_action(self, parsed_args):
         cluster = get_cluster(self.app.vinfra)
         ensure_abgw_exists(cluster)
+
+        fdst = None
+        close_fd = None
         if parsed_args.dc_config_file_path:
             if os.path.exists(parsed_args.dc_config_file_path):
                 raise exceptions.ValidationError(
@@ -95,11 +99,15 @@ class GeoReplicationPrimaryDownloadConfigs(ShowOne):
                     "The provided path is a directory. "
                     "Specify a file to download."
                 )
-            cluster.abgw.geo_replication.primary.download_configs_to_file(
-                dc_config_file_path=parsed_args.dc_config_file_path
-            )
+            fdst = open(parsed_args.dc_config_file_path, 'wb')
+            close_fd = fdst
         else:
-            cluster.abgw.geo_replication.primary.download_configs_to_stdout()
+            fdst = sys.stdout.buffer  # pylint: disable=no-member
+
+        cluster.abgw.geo_replication.primary.download_configs(fdst)
+
+        if close_fd:
+            close_fd.close()
 
 
 class GeoReplicationPrimaryEstablish(TaskCommand):

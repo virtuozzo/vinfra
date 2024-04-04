@@ -1,5 +1,3 @@
-import sys
-
 from vinfra.api import base
 
 
@@ -34,6 +32,7 @@ class GeoReplicationPrimary(base.VinfraApi):
             username=None,  # type: Optional[str]
             password=None,  # type: Optional[str]
     ):
+        log = False if password else True
         return self.client.post_async(
             url="{}/set-up/".format(self.base_url),
             json={
@@ -43,7 +42,8 @@ class GeoReplicationPrimary(base.VinfraApi):
                 "account_server": account_server,
                 "username": username,
                 "password": password,
-            }
+            },
+            log=log
         )
 
     def establish(self):
@@ -63,14 +63,9 @@ class GeoReplicationPrimary(base.VinfraApi):
             stream=True
         )
 
-    def download_configs_to_file(self, dc_config_file_path):
-        with open(dc_config_file_path, 'wb') as dc_config_file_obj:
-            for chunk in self._get_download_primary_config_stream():
-                dc_config_file_obj.write(chunk)
-
-    def download_configs_to_stdout(self):
+    def download_configs(self, fdst):
         for chunk in self._get_download_primary_config_stream():
-            sys.stdout.write(chunk)
+            fdst.write(chunk)
 
 
 class GeoReplicationSecondary(base.VinfraApi):

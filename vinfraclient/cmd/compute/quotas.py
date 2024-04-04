@@ -1,6 +1,7 @@
 import argparse
 import collections
 import logging
+from requests.exceptions import HTTPError
 
 from vinfra import api_versions
 
@@ -19,6 +20,7 @@ class ShowComputeQuotas(ShowOne):
         rv = []
         size_multiplier = {
             'storage.storage_policies.': 1,
+            'storage.volumes_backups.': 1,
             'compute.ram_quota.': 1,
             # the next values are deprecated starting from 4.0 release:
             'compute.ram.': 1 << 20,
@@ -41,8 +43,8 @@ class ShowComputeQuotas(ShowOne):
 
     def configure_parser(self, parser):
         parser.add_argument(
-            "project_id",
-            help="Project ID",
+            "id",
+            help="Project ID or Domain ID",
         )
         parser.add_argument(
             "--usage",
@@ -73,7 +75,7 @@ class ShowComputeQuotas(ShowOne):
 
         if 'used' in compute['ram']:
             if self.app.vinfra.api_version >= api_versions.HCI_VER_35:
-                ram['used'] = self._safe_mul(ram['used'], 1./ mib)
+                ram['used'] = self._safe_mul(ram['used'], 1. / mib)
             ram_quota['used'] = self._safe_mul(ram['used'], mib)
 
     def _fixup_storage(self, data):
@@ -89,8 +91,7 @@ class ShowComputeQuotas(ShowOne):
         def get_dict(cur_dict, mul):
             rv = {}
             for sp_name, limit in cur_dict.items():
-                fix_limit = {}
-                fix_limit['limit'] = self._safe_mul(limit['limit'], mul)
+                fix_limit = {'limit': self._safe_mul(limit['limit'], mul)}
                 if 'used' in limit:
                     fix_limit['used'] = self._safe_mul(limit['used'], mul)
                 rv[sp_name] = fix_limit
@@ -105,8 +106,21 @@ class ShowComputeQuotas(ShowOne):
             storage['storage_policies'] = get_dict(storage['gigabytes'], gib)
 
     def do_action(self, parsed_args):
-        data = self.app.vinfra.compute.quotas.show(parsed_args.project_id,
-                                                   usage=parsed_args.usage)
+        is_domain = True
+        try:
+            self.app.vinfra.domains.get(parsed_args.id)
+        except HTTPError as err:
+            if err.response.status_code in (403, 404):
+                is_domain = False
+            else:
+                raise
+
+        if is_domain:
+            data = self.app.vinfra.compute.domain_quotas.show(
+                parsed_args.id, usage=parsed_args.usage)
+        else:
+            data = self.app.vinfra.compute.quotas.show(
+                parsed_args.id, usage=parsed_args.usage)
         data = data.to_dict()
         self._fixup_ram(data)
         self._fixup_storage(data)
@@ -146,12 +160,12 @@ class UpdateComputeQuotas(Command):
         return sp_name, sp_size
 
     @staticmethod
-    def ram_size(value):
+    def size_value(value):
         try:
             return utils.SizeValue(value.strip()).value
         except ValueError:
             raise argparse.ArgumentTypeError(
-                'Invalid --ram-size format')
+                'Invalid size value format')
 
     @staticmethod
     def placement(value):
@@ -169,8 +183,9 @@ class UpdateComputeQuotas(Command):
 
     def configure_parser(self, parser):
         parser.add_argument(
-            "project_id",
-            help="Project ID"
+            "id",
+            metavar="<project_id/domain_id>",
+            help="Project ID or Domain ID"
         )
         parser.add_argument(
             "--cores",
@@ -187,7 +202,7 @@ class UpdateComputeQuotas(Command):
         )
         ram_group.add_argument(
             "--ram-size",
-            type=self.ram_size,
+            type=self.size_value,
             metavar='<ram>',
             help="Number of RAM",
         )
@@ -235,6 +250,12 @@ class UpdateComputeQuotas(Command):
             type=self.placement,
             help="Comma-separated list of <placement_id>:<size>",
         )
+        parser.add_argument(
+            "--volumes-backups",
+            metavar="<volumes-backups-size>",
+            type=self.size_value,
+            help="The new value for the volumes backups size quota limit"
+        )
 
     def do_action(self, parsed_args):
         if parsed_args.gigabytes:
@@ -254,8 +275,36 @@ class UpdateComputeQuotas(Command):
             raise exceptions.CommandError('The --ram-size option can be used '
                                           'with 4.0 release or higher.')
 
+        is_domain = True
+        try:
+            self.app.vinfra.domains.get(parsed_args.id)
+        except HTTPError as err:
+            if err.response.status_code in (403, 404):
+                is_domain = False
+            else:
+                raise
+
+        if is_domain:
+            if (
+                    parsed_args.floatingip is not None or
+                    parsed_args.ipsec_site_connection is not None or
+                    parsed_args.k8saas_cluster is not None or
+                    parsed_args.lbaas_loadbalancer is not None or
+                    parsed_args.placement is not None):
+                raise exceptions.CommandError(
+                    'Only --cores, --ram-size and --storage-policies can be used for a domain.')
+
+            self.app.vinfra.compute.domain_quotas.update(
+                parsed_args.id,
+                compute_cores=parsed_args.cores,
+                compute_ram=parsed_args.ram_size,
+                storage_policies=parsed_args.storage_policies,
+                volumes_backups=parsed_args.volumes_backups,
+            )
+            return
+
         self.app.vinfra.compute.quotas.update(
-            parsed_args.project_id,
+            parsed_args.id,
             compute_cores=parsed_args.cores,
             compute_ram=parsed_args.ram_size,
             network_floatingip=parsed_args.floatingip,
@@ -264,4 +313,5 @@ class UpdateComputeQuotas(Command):
             lbaas_loadbalancer=parsed_args.lbaas_loadbalancer,
             storage_policies=parsed_args.storage_policies,
             placement=parsed_args.placement,
+            volumes_backups=parsed_args.volumes_backups,
         )

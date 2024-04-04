@@ -156,6 +156,12 @@ class MaintenanceNodeStart(TaskCommand):
             choices=["ignore"],
             help="Ignore NFS evacuation during maintenance"
         )
+        parser.add_argument(
+            "--backend-mode",
+            metavar='<mode>',
+            choices=["ignore"],
+            help="Ignore Backend evacuation during maintenance"
+        )
         node_arg(parser)
 
     def do_action(self, parsed_args):
@@ -168,6 +174,7 @@ class MaintenanceNodeStart(TaskCommand):
             storage_mode=parsed_args.storage_mode,
             alua_mode=parsed_args.alua_mode,
             nfs_mode=parsed_args.nfs_mode,
+            backend_mode=parsed_args.backend_mode,
         )
 
 

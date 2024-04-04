@@ -31,6 +31,10 @@ class SoftwareUpdatesManager(object):
         else:
             return self.api.client.get('/software_updates')
 
+    def reset(self):
+        with ApiV3(self.api.client):
+            return self.api.client.post('/software_updates/reset')
+
     def start_async(self, req):
         params = {
             'accept_eula': req.get('accept_eula', False)

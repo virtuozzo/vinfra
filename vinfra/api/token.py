@@ -1,16 +1,19 @@
 import base64
 import os
-import sys
 import time
+import re
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from vinfra.api import base
 from vinfra.api_versions import version_wrap
 
 LINELEN = 64
 
+__all__ = ['encrypt', 'decrypt']
 
-# borrowed from backend sources:
-def get_key_and_iv(password, salt, klen=32, ilen=16, msgdgst='md5'):
+
+def get_key_and_iv(password, salt, klen=32, ilen=16, msgdgst='sha256'):
     mdf = getattr(__import__('hashlib', fromlist=[msgdgst]), msgdgst)
     password = password.encode('ascii', 'ignore')
 
@@ -22,29 +25,22 @@ def get_key_and_iv(password, salt, klen=32, ilen=16, msgdgst='md5'):
             tmp.append(mdf(tmp[-1] + password + salt).digest())
             keyiv += tmp[-1]
             key = keyiv[:klen]
-            ivector = keyiv[klen:klen+ilen]
-        return key, ivector
+            iv = keyiv[klen:klen+ilen]
+        return key, iv
     except UnicodeDecodeError:
         return None, None
 
 
-# borrowed from backend sources:
-def encrypt(password, plaintext, chunk_it=True, msgdgst='md5'):
-    '''
-    Encription compatible with
-    $ openssl enc -e -aes-256-cbc -base64 -salt  -pass pass:<password> -n \
-      plaintext
+def encrypt(password, plaintext, chunk_it=True, msgdgst='sha256'):
+    """
+    Encryption compatible with
+    $ openssl enc -e -aes-256-cbc -base64 -salt  -pass pass:<password> -n plaintext
     @param password text password
-    @param input plaintext plain text to encode
+    @param plaintext plain text to encode
+    @param chunk_it bool need to chunk or not
+    @param msgdgst algorithm for hash preparation
     @returns base64 encoded string
-    '''
-    try:
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    except ImportError:
-        if sys.platform == 'win32':
-            sys.stderr.write('Please, make sure pycrypto is installed\n')
-        raise
-
+    """
     salt = os.urandom(8)
     key, ivector = get_key_and_iv(password, salt, msgdgst=msgdgst)
     if key is None:
@@ -66,6 +62,46 @@ def encrypt(password, plaintext, chunk_it=True, msgdgst='md5'):
     chunk = lambda s: '\n'.join(s[i: min(i + LINELEN, len(s))]
                                 for i in range(0, len(s), LINELEN))
     return chunk(b64.decode()) if chunk_it else b64.decode()
+
+
+def decrypt(password, ciphertext, msgdgst='sha256'):
+    """
+    Description compatible with
+    openssl enc -d -aes-256-cbc -base64 -salt -pass pass:<password> -in ciphertext
+    @param ciphertext - base64 encoded string
+    @param password text password
+    @param ciphertext encoded text to decode
+    @param msgdgst algorithm for hash preparation
+    @returns bytestring
+    """
+
+    # ignore blank lines and comments
+    filtered = ''
+    for line in ciphertext.split('\n'):
+        line = line.strip()
+        # pylint: disable=anomalous-backslash-in-string
+        if re.search('^\s*$', line) or re.search('^\s*#', line):
+            continue
+        filtered += line + '\n'
+
+    # Base64 decode
+    raw = base64.b64decode(filtered)
+    # pylint: disable=superfluous-parens
+    assert(raw[:8] == b'Salted__')
+    salt = raw[8:16]
+
+    key, iv = get_key_and_iv(password, salt, msgdgst=msgdgst)
+    if key is None:
+        return None
+
+    # The original ciphertext
+    ciphertext = raw[16:]
+
+    # Decrypt
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+    decryptor = cipher.decryptor()
+    p_bytes = decryptor.update(ciphertext) + decryptor.finalize()
+    return p_bytes.decode()
 
 
 # pylint: disable=function-redefined

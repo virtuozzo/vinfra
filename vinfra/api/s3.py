@@ -60,12 +60,15 @@ class S3Api(base.VinfraApi):
                 raise exceptions.VinfraError(err)
         return stream
 
+    # pylint: disable=too-many-arguments
     def create_async(self, nodes, s3gw_domain, tier, redundancy,
-                     failure_domain, gen_cert=None, cert=None, key=None,
+                     failure_domain, md_tier=None, md_redundancy=None, md_failure_domain=None,
+                     s3gw_count=None, gen_cert=None, cert=None, key=None,
                      password=None, insecure=False, notary_provider=None,
                      n_os=None, n_ns=None, ignore_ram_reservation=False):
         nodes = self._adjust_nodes(nodes)
         redundancy = get_api_redundancy(redundancy)
+        md_redundancy = get_api_redundancy(md_redundancy)
 
         if gen_cert or cert:
             scheme = 'https'
@@ -77,6 +80,7 @@ class S3Api(base.VinfraApi):
         data = {
             'nodes': nodes,
             's3gw_domain': s3gw_domain,
+            's3gw_count': s3gw_count,
             'tier': tier,
             'redundancy': redundancy,
             'failure_domain': failure_domain,
@@ -86,6 +90,16 @@ class S3Api(base.VinfraApi):
                 'gen_cert': gen_cert,
             },
         }
+
+        metadata_policy = {}
+        if md_tier:
+            metadata_policy['tier'] = md_tier
+        if md_redundancy:
+            metadata_policy['redundancy'] = md_redundancy
+        if md_failure_domain:
+            metadata_policy['failure_domain'] = md_failure_domain
+        if metadata_policy:
+            data['metadata_policy'] = metadata_policy
 
         if notary_provider:
             data['np'] = notary_provider
@@ -103,13 +117,22 @@ class S3Api(base.VinfraApi):
 
         return self.client.post_async(self.base_url, files=files)
 
-    def assign_nodes_async(self, nodes, ignore_ram_reservation=False):
+    def assign_nodes_async(self, nodes, ignore_ram_reservation=False, s3gw_count=None):
         data = {
-            'nodes': self._adjust_nodes(nodes)
+            'nodes': self._adjust_nodes(nodes),
+            's3gw_count': s3gw_count
         }
         if ignore_ram_reservation:
             data['ignore_ram_reservation'] = ignore_ram_reservation
         url = "{}/nodes/assign".format(self.base_url)
+        return self.client.post_async(url, json=data)
+
+    def change_nodes_async(self, nodes, s3gw_count):
+        data = {
+            'nodes': self._adjust_nodes(nodes)
+        }
+        data['s3gw_count'] = s3gw_count
+        url = "{}/nodes/change".format(self.base_url)
         return self.client.post_async(url, json=data)
 
     def release_nodes_async(self, nodes):
@@ -122,10 +145,12 @@ class S3Api(base.VinfraApi):
     def change(
             self,
             failure_domain=None, tier=None, redundancy=None,
+            md_tier=None, md_redundancy=None, md_failure_domain=None,
             gen_cert=None, cert=None, key=None, password=None,
-            insecure=False, notary_provider=None
+            insecure=False, notary_provider=None, s3gw_count=None,
     ):
         redundancy = get_api_redundancy(redundancy)
+        md_redundancy = get_api_redundancy(md_redundancy)
         protocol = None
         if any([gen_cert, cert, key, password, insecure]):
             if gen_cert or cert:
@@ -139,13 +164,26 @@ class S3Api(base.VinfraApi):
                 'password': password,
                 'gen_cert': gen_cert,
             }
+
         data = flatten_args(
             failure_domain=failure_domain,
             tier=tier,
             redundancy=redundancy,
             protocol=protocol,
-            np=notary_provider
+            np=notary_provider,
+            s3gw_count=s3gw_count,
         )
+
+        metadata_policy = {}
+        if md_tier:
+            metadata_policy['tier'] = md_tier
+        if md_redundancy:
+            metadata_policy['redundancy'] = md_redundancy
+        if md_failure_domain:
+            metadata_policy['failure_domain'] = md_failure_domain
+        if metadata_policy:
+            data['metadata_policy'] = metadata_policy
+
         files = {'json': (None, json.dumps(data))}
         if cert:
             files['cert'] = self._get_stream(cert)

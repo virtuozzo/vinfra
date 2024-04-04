@@ -1,5 +1,8 @@
+import os
+import sys
 import textwrap
 
+from vinfraclient import exceptions
 from vinfraclient.cmd.abgw import get_reg_password, ensure_abgw_exists
 from vinfraclient.cmd.base import TaskCommand, Lister, ShowOne
 
@@ -21,7 +24,7 @@ class CreateAbgwRegistration(TaskCommand):
             "--address",
             metavar="<address>",
             required=True,
-            help="Registration IP address."
+            help="Registration domain name."
         )
         parser.add_argument(
             "--account-server",
@@ -37,6 +40,23 @@ class CreateAbgwRegistration(TaskCommand):
             help=(
                 "Partner account in the cloud or of an organization "
                 "administrator on the local management server."
+            )
+        )
+        parser.add_argument(
+            "--primary-storage-id",
+            metavar="<primary_storage_id>",
+            required=False,
+            help=(
+                "The ID of the replica storage."
+            )
+        )
+        parser.add_argument(
+            "--failback-storage-id",
+            metavar="<failback_storage_id>",
+            required=False,
+            help=(
+                "The ID of the failback storage which will become primary "
+                "after failback procedure is completed."
             )
         )
         parser.add_argument(
@@ -60,6 +80,8 @@ class CreateAbgwRegistration(TaskCommand):
             username=parsed_args.username,
             password=get_reg_password(parsed_args),
             location=parsed_args.location,
+            primary_storage_id=parsed_args.primary_storage_id,
+            failback_storage_id=parsed_args.failback_storage_id,
         )
 
 
@@ -92,6 +114,53 @@ class ShowAbgwRegistration(ShowOne):
         ensure_abgw_exists(cluster)
         return find_resource(
             cluster.abgw.registrations, parsed_args.registration)
+
+
+class ExportRegistration(ShowOne):
+
+    _description = "Export backup storage registration."
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "registration",
+            metavar="<registration>",
+            help="Registration ID or name",
+        )
+        parser.add_argument(
+            "--output-file",
+            dest="output_file",
+            metavar="<output-filepath>",
+            help=(
+                "Path where the registration file will be downloaded."
+            )
+        )
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        ensure_abgw_exists(cluster)
+
+        fdst = None
+        close_fd = None
+        if parsed_args.output_file:
+            if os.path.exists(parsed_args.output_file):
+                raise exceptions.ValidationError(
+                    "Path already exists. Provide another path or the "
+                    "existing file will be overwritten."
+                )
+            if os.path.isdir(parsed_args.output_file):
+                raise exceptions.ValidationError(
+                    "The provided path is a directory. "
+                    "Specify a file to download."
+                )
+            fdst = open(parsed_args.output_file, 'wb')
+            close_fd = fdst
+        else:
+            fdst = sys.stdout.buffer  # pylint: disable=no-member
+
+        cluster.abgw.registrations.export(parsed_args.registration, fdst)
+
+        if close_fd:
+            close_fd.close()
 
 
 class DeleteAbgwRegistration(TaskCommand):
@@ -156,7 +225,7 @@ class UpdateAbgwRegistration(TaskCommand):
         parser.add_argument(
             "--address",
             metavar="<address>",
-            help="Registration IP address."
+            help="Registration domain name."
         )
         parser.add_argument(
             "--username",
@@ -211,6 +280,11 @@ class RenewAbgwRegistration(TaskCommand):
             )
         )
         parser.add_argument(
+            "--server-cert-only",
+            action="store_true",
+            help="Update server certificate only."
+        )
+        parser.add_argument(
             "--stdin",
             action="store_true",
             help="Use for setting registration password from stdin"
@@ -225,6 +299,7 @@ class RenewAbgwRegistration(TaskCommand):
         )
         return cluster.abgw.registrations.renew_certificates(
             registration=registration,
+            server_cert_only=parsed_args.server_cert_only,
             username=parsed_args.username,
             password=get_reg_password(parsed_args),
         )
@@ -245,7 +320,7 @@ class CreateAbgwTrueImageRegistration(TaskCommand):
             "--address",
             metavar="<address>",
             required=True,
-            help="Registration IP address."
+            help="Registration domain name."
         )
         parser.add_argument(
             "--revocation-url",
@@ -303,5 +378,27 @@ class RenewTrueImageCertificates(TaskCommand):
             registration=true_image_registration,
             archived_certificates_chain=get_stream(
                 parsed_args.archived_certificates_chain
+            ),
+        )
+
+
+class ImportRegistrations(TaskCommand):
+
+    _description = "Import backup storage registrations."
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "--infile",
+            dest="infile",
+            required=True,
+            help="Path to the upstream info file."
+        )
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        ensure_abgw_exists(cluster)
+        return cluster.abgw.registrations.import_async(
+            infile=get_stream(
+                parsed_args.infile
             ),
         )

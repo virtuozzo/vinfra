@@ -4,7 +4,7 @@ from requests import exceptions as request_exceptions
 from vinfra import api_versions
 from vinfraclient import exceptions
 from vinfraclient.argtypes import parse_dict_options, parse_list_options
-from vinfraclient.cmd.base import ShowOne, TaskCommand
+from vinfraclient.cmd.base import Command, ShowOne, TaskCommand
 from vinfraclient.exceptions import ValidationError
 from vinfraclient.utils import find_resource
 
@@ -14,6 +14,13 @@ class SoftwareUpdatesStatus(ShowOne):
 
     def do_action(self, parsed_args):
         return self.app.vinfra.software_updates.get()
+
+
+class SoftwareUpdatesReset(Command):
+    _description = "Reset software updates state."
+
+    def do_action(self, parsed_args):
+        return self.app.vinfra.software_updates.reset()
 
 
 def parse_maintenance_config(value):

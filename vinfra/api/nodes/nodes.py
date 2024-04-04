@@ -62,6 +62,7 @@ class NodeManager(base.Manager):
             self, node, iscsi_mode=None, compute_mode=None,
             s3_mode=None, storage_mode=None,
             alua_mode=None, nfs_mode=None,
+            backend_mode=None,
     ):
         data = {}
         if iscsi_mode is not None:
@@ -76,6 +77,8 @@ class NodeManager(base.Manager):
             data['alua_mode'] = alua_mode
         if nfs_mode is not None:
             data['nfs_mode'] = nfs_mode
+        if backend_mode is not None:
+            data['backend_mode'] = backend_mode
 
         url = "{}/{}/maintenance/".format(self.base_url, base.get_id(node))
         return self.client.post_async(url, json=data)

@@ -52,7 +52,7 @@ class LocationsConfigManager(base.Manager):
         cfg = self.get()
         return tuple(dict(
             id=n, singular=cfg.s[n], plural=cfg.p[n])
-                     for n in xrange(0, self.nr_locations))
+                     for n in range(0, self.nr_locations))
 
     def set(self, level, singular, plural):
         cfg = self.get()

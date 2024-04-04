@@ -40,10 +40,10 @@ class VolumeSnapshotCreateTask(base.PollTask):
 
 
 class VolumeSnapshotDeleteTask(base.PollTask):
-    def __init__(self, manager, volume_id, resource):
+    def __init__(self, manager, resource):
         self.manager = manager
-        self.volume_id = volume_id
         self.resource = resource
+        self.snapshot_id = base.get_id(resource)
 
     def wait(self, timeout=None):
         timeout = timeout or self.default_timeout
@@ -53,14 +53,14 @@ class VolumeSnapshotDeleteTask(base.PollTask):
             msg = (
                 "Failed to delete volume snapshot (id={}). Timeout of {} "
                 "seconds exceeded (status={})".format
-                (self.volume_id, timeout, self.resource.get().status)
+                (self.snapshot_id, timeout, self.resource.get().status)
             )
             raise exceptions.TimeoutError(msg)
 
     def poll(self):
-        volumes = self.manager.list()
-        for volume in volumes:
-            if volume.id == self.volume_id:
+        snapshots = self.manager.list()
+        for snapshot in snapshots:
+            if snapshot.id == self.snapshot_id:
                 return None
         return {}
 
@@ -135,7 +135,7 @@ class VolumeSnapshotManager(Manager):
     def delete_async(self, volume_snapshot):
         snapshot_id = base.get_id(volume_snapshot)
         self._delete("{}/{}".format(self.base_url, snapshot_id))
-        return VolumeSnapshotDeleteTask(self, snapshot_id, volume_snapshot)
+        return VolumeSnapshotDeleteTask(self, volume_snapshot)
 
     @base.async_wait
     def delete(self, volume_snapshot):

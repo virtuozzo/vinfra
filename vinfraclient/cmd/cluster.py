@@ -191,7 +191,8 @@ class GetJoinConfig(ShowOne):
 
     def do_action(self, parsed_args):
         cluster = utils.get_cluster(self.app.vinfra)
-        return cluster.get_join_config(parsed_args.node)
+        node = utils.find_resource(self.app.vinfra.nodes, parsed_args.node)
+        return cluster.get_join_config(node)
 
 
 class SetJoinConfig(ShowOne):
@@ -214,7 +215,8 @@ class SetJoinConfig(ShowOne):
 
     def do_action(self, parsed_args):
         cluster = utils.get_cluster(self.app.vinfra)
-        return cluster.set_join_config(parsed_args.node, parsed_args.disks)
+        node = utils.find_resource(self.app.vinfra.nodes, parsed_args.node)
+        return cluster.set_join_config(node, parsed_args.disks)
 
 
 class SwitchToIPv6(TaskCommand):

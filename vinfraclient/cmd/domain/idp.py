@@ -6,6 +6,8 @@ from vinfraclient.cmd.base import Command, Lister, ShowOne
 from vinfraclient.compat import parse_qs, urlparse
 from vinfraclient.utils import find_resource, get_json
 
+from .utils import find_domain
+
 
 def _add_domain_option(parser):
     parser.add_argument(
@@ -45,7 +47,7 @@ def _add_idp_optional(parser):
         "--response-type",
         metavar="<response-type>",
         choices=['code', 'id_token'],
-        default='id_token',
+        default=None,
         help="Response type to be used in authorization flow",
     )
     parser.add_argument(
@@ -85,6 +87,30 @@ def _add_idp_optional(parser):
         help="Disable identity provider",
     )
 
+    verify_ssl_group = parser.add_mutually_exclusive_group()
+    verify_ssl_group.add_argument(
+        "--verify-ssl",
+        dest="verify_ssl",
+        action='store_true',
+        default=None,
+        help="Enable identity provider endpoints SSL verification",
+    )
+    verify_ssl_group.add_argument(
+        "--dont-verify-ssl",
+        dest="verify_ssl",
+        action='store_false',
+        default=None,
+        help="Disable identity provider endpoints SSL verification",
+    )
+
+    parser.add_argument(
+        "--request-timeout",
+        metavar="<seconds>",
+        type=int,
+        default=None,
+        help="Identity provider API request timeout (default: 5)",
+    )
+
 
 class ListDomainIdPs(Lister):
     _description = "List domain identity providers."
@@ -94,7 +120,7 @@ class ListDomainIdPs(Lister):
         _add_domain_option(parser)
 
     def do_action(self, parsed_args):
-        domain = find_resource(self.app.vinfra.domains, parsed_args.domain)
+        domain = find_domain(self.app.vinfra, parsed_args.domain)
         return domain.idps_manager.list()
 
 
@@ -106,7 +132,7 @@ class ShowDomainIdP(ShowOne):
         _add_idp_arg(parser)
 
     def do_action(self, parsed_args):
-        domain = find_resource(self.app.vinfra.domains, parsed_args.domain)
+        domain = find_domain(self.app.vinfra, parsed_args.domain)
         idp = find_resource(domain.idps_manager, parsed_args.idp)
         return idp
 
@@ -124,7 +150,7 @@ class CreateDomainIdP(ShowOne):
         )
 
     def do_action(self, parsed_args):
-        domain = find_resource(self.app.vinfra.domains, parsed_args.domain)
+        domain = find_domain(self.app.vinfra, parsed_args.domain)
         return domain.idps_manager.create(
             parsed_args.name,
             parsed_args.issuer,
@@ -135,6 +161,8 @@ class CreateDomainIdP(ShowOne):
             client_secret=parsed_args.client_secret,
             mapping=parsed_args.mapping,
             enabled=parsed_args.enabled,
+            verify_ssl=parsed_args.verify_ssl,
+            request_timeout=parsed_args.request_timeout,
         )
 
 
@@ -146,7 +174,7 @@ class DeleteDomainIdP(Command):
         _add_idp_arg(parser)
 
     def do_action(self, parsed_args):
-        domain = find_resource(self.app.vinfra.domains, parsed_args.domain)
+        domain = find_domain(self.app.vinfra, parsed_args.domain)
         idp = find_resource(domain.idps_manager, parsed_args.idp)
         return domain.idps_manager.delete(idp)
 
@@ -166,7 +194,7 @@ class SetDomainIdP(ShowOne):
         _add_idp_arg(parser)
 
     def do_action(self, parsed_args):
-        domain = find_resource(self.app.vinfra.domains, parsed_args.domain)
+        domain = find_domain(self.app.vinfra, parsed_args.domain)
         idp = find_resource(domain.idps_manager, parsed_args.idp)
         return idp.update(
             name=parsed_args.name,
@@ -178,6 +206,8 @@ class SetDomainIdP(ShowOne):
             client_secret=parsed_args.client_secret,
             mapping=parsed_args.mapping,
             enabled=parsed_args.enabled,
+            verify_ssl=parsed_args.verify_ssl,
+            request_timeout=parsed_args.request_timeout,
         )
 
 

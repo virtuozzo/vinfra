@@ -1,4 +1,3 @@
-
 from vinfra.api import base
 
 
@@ -24,9 +23,11 @@ class AbgwRegistration(base.Resource):
             data['address'] = address
         if username is not None:
             data['username'] = username
+        log = True
         if password is not None:
             data['password'] = password
-        return self.manager.client.patch_async(self.base_url, json=data)
+            log = False
+        return self.manager.client.patch_async(self.base_url, json=data, log=log)
 
     def delete(
             self,
@@ -37,12 +38,15 @@ class AbgwRegistration(base.Resource):
         data = {}
         if force:
             data['force'] = force
+
+        log = True
         if username and password:
             data = {
                 'username': username,
                 'password': password,
             }
-        return self.manager.client.delete_async(self.base_url, json=data)
+            log = False
+        return self.manager.client.delete_async(self.base_url, json=data, log=log)
 
 
 class AbgwRegistrationsApi(base.Manager):
@@ -65,6 +69,8 @@ class AbgwRegistrationsApi(base.Manager):
             username,  # type: str
             password,  # type: str
             location=None,  # type: str
+            primary_storage_id=None,  # type: str
+            failback_storage_id=None,  # type: str
     ):
         data = {
             'name': name,
@@ -75,7 +81,23 @@ class AbgwRegistrationsApi(base.Manager):
         }
         if location is not None:
             data['location'] = location
-        return self.client.post_async(self.base_url, json=data)
+        if primary_storage_id is not None:
+            data['primary_storage_id'] = primary_storage_id
+        if failback_storage_id is not None:
+            data['failback_storage_id'] = failback_storage_id
+        return self.client.post_async(self.base_url, json=data, log=False)
+
+    def import_async(self, infile):
+        # infile is a stream
+        url = "/{}/import/".format(self.base_url)
+        headers = {
+            'Content-Type': 'application/octet-stream',
+        }
+        return self.client.post_async(
+            url,
+            headers=headers,
+            data=infile
+        )
 
     def create_true_image_async(
             self,
@@ -105,6 +127,21 @@ class AbgwRegistrationsApi(base.Manager):
         registration_id = base.get_id(registration)
         return self._get("{}/{}".format(self.base_url, registration_id))
 
+    def export(
+            self,
+            registration,  # type: AbgwRegistration
+            fdst
+    ):
+
+        stream = self.client.send_request_raw(
+            method="get",
+            url="{}/{}/export/".format(self.base_url, base.get_id(registration)),
+            stream=True
+        )
+
+        for chunk in stream:
+            fdst.write(chunk)
+
     def list(self):
         return self._list(self.base_url)
 
@@ -131,11 +168,15 @@ class AbgwRegistrationsApi(base.Manager):
             registration,
             username,  # type: str
             password,  # type: str
+            server_cert_only=False,  # type: bool
     ):
         registration_id = base.get_id(registration)
         data = {
             'username': username,
             'password': password,
         }
+        if server_cert_only:
+            data['server_cert_only'] = server_cert_only
+
         url = "{}/{}/renew".format(self.base_url, registration_id)
-        return self.client.post_async(url, json=data)
+        return self.client.post_async(url, json=data, log=False)

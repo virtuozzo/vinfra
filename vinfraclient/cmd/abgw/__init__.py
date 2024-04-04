@@ -3,12 +3,11 @@ import base64
 import getpass
 import os
 import re
-
-from requests import exceptions as request_exceptions
+import sys
 
 from vinfra import api_versions
 from vinfra.api.compute.storage_policies import get_vinfra_redundancy
-from vinfra.utils import first
+from vinfra.utils import first, flatten_args
 
 from vinfraclient import exceptions
 from vinfraclient.argtypes import boolean, parse_list_options
@@ -252,39 +251,6 @@ class CreateBackupService(TaskCommand):
             metavar="<nodes>", type=parse_list_options, required=True,
             help="A comma-separated list of node hostnames or IDs"
         )
-        parser.add_argument(
-            "--name",
-            metavar="<name>",
-            help="Backup registration name."
-        )
-        parser.add_argument(
-            "--address",
-            metavar="<address>",
-            help="Backup registration address."
-        )
-        parser.add_argument(
-            "--location",
-            metavar="<location>",
-            help="Backup registration location."
-        )
-        parser.add_argument(
-            "--username",
-            metavar="<username>",
-            dest='username',
-            help=(
-                "Partner account in the cloud or of an organization "
-                "administrator on the local management server."
-            )
-        )
-        parser.add_argument(
-            "--account-server",
-            metavar="<account-server>",
-            dest='account_server',
-            help=(
-                "URL of the cloud management portal or the hostname/IP "
-                "address and port of the local management server."
-            )
-        )
         # only encoding
         storage_policy_options(
             parser, required=False, use_defaults=False, replicas=False)
@@ -295,10 +261,47 @@ class CreateBackupService(TaskCommand):
             "--storage-type", dest="storage_type", required=True,
             choices=storage_type_choices, help="Choose storage type"
         )
-        parser.add_argument(
+        registration_group = parser.add_argument_group(
+            title="Cloud registrations options",
+        )
+        registration_group.add_argument(
+            "--name",
+            metavar="<name>",
+            help="Backup registration name."
+        )
+        registration_group.add_argument(
+            "--address",
+            metavar="<address>",
+            help="Backup registration address."
+        )
+        registration_group.add_argument(
+            "--location",
+            metavar="<location>",
+            help="Backup registration location."
+        )
+        registration_group.add_argument(
+            "--username",
+            metavar="<username>",
+            dest='username',
+            help=(
+                "Partner account in the cloud or of an organization "
+                "administrator on the local management server."
+            )
+        )
+        registration_group.add_argument(
+            "--account-server",
+            metavar="<account-server>",
+            dest='account_server',
+            help=(
+                "URL of the cloud management portal or the hostname/IP "
+                "address and port of the local management server."
+            )
+        )
+        registration_group.add_argument(
             "--stdin", action="store_true",
             help="Use for setting registration password from stdin"
         )
+
         # Deprecated arguments
         parser.add_argument(
             "--domain", metavar="<domain>", dest="address",
@@ -320,6 +323,12 @@ class CreateBackupService(TaskCommand):
         )
 
     def do_action(self, parsed_args):
+        if self._cmd_name == 'service backup cluster create':
+            self.app.stderr.write(
+                "The command '{}' is deprecated and will be removed in the "
+                "future. Please use 'service backup cluster deploy-standalone' "
+                "command.\n".format(self._cmd_name))
+
 
         cluster = get_cluster(self.app.vinfra)
         nodes = [find_resource(self.app.vinfra.nodes, node)
@@ -337,6 +346,12 @@ class CreateBackupService(TaskCommand):
                 storage_type=parsed_args.storage_type,
             )
         else:
+            has_reg = flatten_args(
+                address=parsed_args.address,
+                location=parsed_args.location,
+                username=parsed_args.username,
+                account_server=parsed_args.account_server,
+            )
             create_params = dict(
                 nodes=nodes,
                 name=parsed_args.name,
@@ -344,7 +359,7 @@ class CreateBackupService(TaskCommand):
                 location=parsed_args.location,
                 username=parsed_args.username,
                 account_server=parsed_args.account_server,
-                password=get_reg_password(parsed_args),
+                password=get_reg_password(parsed_args) if has_reg else None,
                 tier=parsed_args.tier,
                 redundancy=parsed_args.redundancy,
                 failure_domain=parsed_args.failure_domain,
@@ -356,19 +371,12 @@ class CreateBackupService(TaskCommand):
         return cluster.abgw.create_async(**create_params)
 
 
-class TurnToUpstreamBackupGateway(TaskCommand):
-    _description = "Turn the existing Standalone Backup Gateway to Upstream."
-
-    def configure_parser(self, parser):
-        parser.add_argument(
-            "--address",
-            metavar="<address>", required=True,
-            help="Address of Upstream Backup Gateway."
-        )
+class TurnIntoUpstreamBackupGateway(TaskCommand):
+    _description = "Turn the existing Standalone Backup Gateway into Upstream."
 
     def do_action(self, parsed_args):
         cluster = get_cluster(self.app.vinfra)
-        return cluster.abgw.turn_to_upstream_async(address=parsed_args.address)
+        return cluster.abgw.turn_into_upstream_async()
 
 
 class DeployUpstreamBackupGateway(TaskCommand):
@@ -390,11 +398,6 @@ class DeployUpstreamBackupGateway(TaskCommand):
             "--storage-type", dest="storage_type", required=True,
             choices=storage_type_choices, help="Choose storage type"
         )
-        parser.add_argument(
-            "--address",
-            metavar="<address>", required=True,
-            help="Address of Upstream Backup Gateway."
-        )
 
     def do_action(self, parsed_args):
 
@@ -408,7 +411,6 @@ class DeployUpstreamBackupGateway(TaskCommand):
             redundancy=parsed_args.redundancy,
             failure_domain=parsed_args.failure_domain,
             storage_type=parsed_args.storage_type,
-            address=parsed_args.address
         )
         storage_params = get_storage_params(parsed_args)
         if storage_params:
@@ -435,6 +437,11 @@ class RenewBackupCertificates(TaskCommand):
             )
         )
         parser.add_argument(
+            "--server-cert-only",
+            action="store_true",
+            help="Update server certificate only."
+        )
+        parser.add_argument(
             "--stdin", action="store_true",
             help="Use for setting registration password from stdin."
         )
@@ -458,14 +465,15 @@ class RenewBackupCertificates(TaskCommand):
             registration = first(registrations)
             return cluster.abgw.registrations.renew_certificates(
                 registration,
+                server_cert_only=parsed_args.server_cert_only,
                 username=parsed_args.reg_account,
                 password=get_reg_password(parsed_args),
             )
 
 
-class DownloadUpstreamInfo(ShowOne):
+class ExportUpstream(ShowOne):
     _description = (
-        "Download Upstream Backup Gateway info."
+        "Export upstream Backup Gateway info."
     )
 
     def configure_parser(self, parser):
@@ -474,13 +482,16 @@ class DownloadUpstreamInfo(ShowOne):
             dest="output_file",
             metavar="<output-filepath>",
             help=(
-                "Path where the configuration file will be downloaded."
+                "Path where the upstream info file will be exported."
             )
         )
 
     def do_action(self, parsed_args):
         cluster = get_cluster(self.app.vinfra)
         ensure_abgw_exists(cluster)
+
+        fdst = None
+        close_fd = None
         if parsed_args.output_file:
             if os.path.exists(parsed_args.output_file):
                 raise exceptions.ValidationError(
@@ -492,11 +503,20 @@ class DownloadUpstreamInfo(ShowOne):
                     "The provided path is a directory. "
                     "Specify a file to download."
                 )
-            cluster.abgw.download_upstream_info(
-                output_file=parsed_args.output_file
-            )
+
+            output_dir = os.path.dirname(parsed_args.output_file)
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+
+            fdst = open(parsed_args.output_file, 'wb')
+            close_fd = fdst
         else:
-            cluster.abgw.download_upstream_info()
+            fdst = sys.stdout.buffer  # pylint: disable=no-member
+
+        cluster.abgw.export_upstream(fdst)
+
+        if close_fd:
+            close_fd.close()
 
 
 class DeployReverseProxyBackupGateway(TaskCommand):
@@ -522,6 +542,11 @@ class DeployReverseProxyBackupGateway(TaskCommand):
             "--upstream-info-file", dest="upstream_info_file",
             required=True, help="Upstream info file path."
         )
+        parser.add_argument(
+            "--nameserver", action='append', dest="nameservers", required=False,
+            help="Nameserver IP address. This DNS server will serve "
+                 "recursive queries from Reverse-proxy."
+        )
 
     def do_action(self, parsed_args):
 
@@ -535,7 +560,8 @@ class DeployReverseProxyBackupGateway(TaskCommand):
             redundancy=parsed_args.redundancy,
             failure_domain=parsed_args.failure_domain,
             storage_type=parsed_args.storage_type,
-            upstream_info_file=get_stream(parsed_args.upstream_info_file)
+            upstream_info_file=get_stream(parsed_args.upstream_info_file),
+            nameservers=parsed_args.nameservers,
         )
         storage_params = get_storage_params(parsed_args)
         if storage_params:
@@ -551,11 +577,165 @@ class AddNewUpstream(TaskCommand):
             "--upstream-info-file", dest="upstream_info_file",
             required=True, help="Upstream info file path."
         )
+        parser.add_argument(
+            "--nameserver", action='append', dest="nameservers", required=False,
+            help=argparse.SUPPRESS  # Upstream cluster as a nameserver.
+        )
 
     def do_action(self, parsed_args):
         cluster = get_cluster(self.app.vinfra)
         return cluster.abgw.add_new_upstream_async(
-            upstream_info_file=get_stream(parsed_args.upstream_info_file))
+            upstream_info_file=get_stream(parsed_args.upstream_info_file),
+            nameservers=parsed_args.nameservers)
+
+
+class UpstreamWeight(object):
+    metavar = "<dc_uid>:<weight>"
+    help = ("Upstream weight in the format:\n"
+            "dc_uid: Datacenter UID of upstream Backup Gateway;\n"
+            "weight: The weight of the specified upstream.\n"
+            "(this option can be used multiple times).")
+
+    def __init__(self, dc_uid, weight):
+        self.dc_uid = dc_uid
+        self.weight = weight
+
+    def __str__(self):
+        return "{}:{}".format(self.dc_uid, self.weight)
+
+    __repr__ = __str__
+
+    @classmethod
+    def from_string(cls, value):
+        if ':' not in value:
+            raise argparse.ArgumentTypeError("unrecognized format mapping")
+
+        dc_uid, weight = value.split(':')
+
+        if not weight.isdigit():
+            raise argparse.ArgumentTypeError(
+                "Invalid 'weight': {!r}.".format(weight))
+
+        return cls(dc_uid, int(weight))
+
+    def to_dict(self):
+        return {
+            'dc_uid': self.dc_uid,
+            'weight': self.weight,
+        }
+
+
+class Rebalance(TaskCommand):
+    _description = "Rebalance upstream Backup Gateways."
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "--set",
+            dest="upstreams_set",
+            action="append",
+            required=False,
+            metavar=UpstreamWeight.metavar,
+            type=UpstreamWeight.from_string,
+            help=UpstreamWeight.help,
+        )
+        parser.add_argument(
+            "--exclude",
+            dest="upstreams_exclude",
+            action="append",
+            required=False,
+            help="Datacenter UID of upstream Backup Gateway to exclude "
+                 "(this option can be used multiple times).",
+        )
+        parser.add_argument(
+            "--registration-id",
+            dest="registration_id",
+            required=False,
+            help="Registration ID of upstream Backup Gateway "
+                 "for per-registration rebalancing.",
+        )
+        parser.add_argument(
+            "--threshold",
+            dest="threshold",
+            required=False,
+            help="Free disk space threshold, in percent, to exclude upstream.",
+        )
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        return cluster.abgw.rebalance_upstream_async(
+            parsed_args.upstreams_set, parsed_args.upstreams_exclude,
+            parsed_args.registration_id, parsed_args.threshold)
+
+
+class ImportAccounts(TaskCommand):
+    _description = "Import accounts from upstream Backup Gateway to reverse proxy."
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "--source-upstream-id", dest="source_upstream_id",
+            required=True, help="Datacenter UID of a source upstream Backup Gateway."
+        )
+        parser.add_argument(
+            "--accounts-file", dest="accounts_file",
+            required=True, help="Path to accounts file."
+        )
+        parser.add_argument(
+            "--log-dir", dest="log_dir",
+            required=False, help="Log directory."
+        )
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        return cluster.abgw.import_accounts_async(
+            parsed_args.source_upstream_id,
+            get_stream(parsed_args.accounts_file),
+            parsed_args.log_dir,
+        )
+
+
+class MoveAccounts(TaskCommand):
+    _description = "Move accounts from one upstream Backup Gateway to another."
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "--source-upstream-id", dest="source_upstream_id",
+            required=True, help="Datacenter UID of a source upstream Backup Gateway."
+        )
+        parser.add_argument(
+            "--target-upstream-id", dest="target_upstream_id",
+            required=True, help="Datacenter UID of a target upstream Backup Gateway."
+        )
+        parser.add_argument(
+            "--accounts-file", dest="accounts_file",
+            required=True, help="Path to accounts file."
+        )
+        parser.add_argument(
+            "--log-dir", dest="log_dir",
+            required=False, help="Log directory."
+        )
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        return cluster.abgw.move_accounts_async(
+            parsed_args.source_upstream_id,
+            parsed_args.target_upstream_id,
+            get_stream(parsed_args.accounts_file),
+            parsed_args.log_dir,
+        )
+
+
+class RemoveUpstream(TaskCommand):
+    _description = "Remove upstream from Reverse Proxy Backup Gateway."
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "--dc-uid", dest="dc_uid",
+            required=True, help="Datacenter UUID of upstream Backup Gateway."
+        )
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        return cluster.abgw.remove_upstream_async(parsed_args.dc_uid)
 
 
 class Process(ShowOne):
@@ -571,6 +751,11 @@ class Process(ShowOne):
             "--retry", action="store_true", required=False, default=False,
             help="Retry a suspended Backup Gateway process."
         )
+        subcommands.add_argument(
+            "--cancel", action="store_true", required=False, default=False,
+            help="Try to cancel an active Backup Gateway process."
+        )
+
         parser.add_argument(
             "--process-id", required=False, default=None,
             help="Backup Gateway process ID."
@@ -582,6 +767,8 @@ class Process(ShowOne):
             return cluster.abgw.show_process(parsed_args.process_id)
         elif parsed_args.retry:
             return cluster.abgw.retry(parsed_args.process_id)
+        elif parsed_args.cancel:
+            return cluster.abgw.cancel(parsed_args.process_id)
         raise exceptions.VinfraError('No options')
 
 
@@ -630,7 +817,12 @@ class ShowBackupService(ShowOne):
 
     def do_action(self, parsed_args):
         cluster = get_cluster(self.app.vinfra)
-        return cluster.abgw.get()
+        rv = cluster.abgw.get()
+        if rv:
+            for upstream in rv.get('upstreams', []):
+                if upstream.get('weight') == -1:
+                    upstream.pop('weight')
+        return rv
 
 
 class AddNodes(TaskCommand):
@@ -915,5 +1107,125 @@ class ChangeLimitsParams(ClientLimits):
             parsed_args.max_connections,
             parsed_args.max_ingress,
             parsed_args.max_egress,
-            parsed_args.apply_on_all_nodes
+            parsed_args.apply_on_all_nodes,
         )
+
+
+class ShowThrottlingConfig(ShowOne):
+    _description = "Show backup storage throttling configuration properties."
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        ensure_abgw_exists(cluster)
+        return cluster.abgw.throttling_limits.get()
+
+
+class ResetThrottlingConfig(ShowOne):
+    _description = "Reset backup storage custom throttling configuration by deleting it."
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        ensure_abgw_exists(cluster)
+        return cluster.abgw.throttling_limits.delete()
+
+
+class ThrottlingConfig(TaskCommand):
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "--soft-threshold", required=False, default=None,
+            help=(
+                "Soft threshold limit in %%. "
+                "Valid range is between 85-95%%"
+            )
+        )
+        parser.add_argument(
+            "--s3-threshold", required=False, default=None,
+            help=(
+                "Object storage threshold limit in MBs. "
+                "Must be higher than the default limit of 300 MBs. "
+                "This parameter can be used only if backup storage is object storage!"
+            )
+        )
+
+
+class SetThrottlingConfig(ThrottlingConfig):
+    _description = "Set backup storage throttling configuration with provided parameters."
+
+    def do_action(self, parsed_args):
+        if not any([
+                parsed_args.soft_threshold, parsed_args.s3_threshold
+        ]):
+            raise exceptions.CommandError(
+                "Arguments missing. "
+                "Use --help for more information about the command."
+            )
+
+        cluster = get_cluster(self.app.vinfra)
+        ensure_abgw_exists(cluster)
+        return cluster.abgw.throttling_limits.update(
+            parsed_args.soft_threshold,
+            parsed_args.s3_threshold
+        )
+
+
+class RestartBackupNodes(ShowOne):
+    _description = 'Restart backup nodes'
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        ensure_abgw_exists(cluster)
+        url = "{}/restart/".format(cluster.abgw.base_url)
+        return cluster.abgw.client.post(url)
+
+
+class ChangeUpstream(ShowOne):
+    _description = 'Change upstream redirect address'
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "--upstream-id", dest="upstream_id", required=True,
+            help="Datacenter UUID of upstream Backup Gateway."
+        )
+        group = parser.add_mutually_exclusive_group(required=False)
+        group.add_argument(
+            "--redirect-address", dest="redirect_address", help="Redirect address"
+        )
+        group.add_argument(
+            "--no-redirect", dest="no_redirect", action='store_true', help="No redirect address"
+        )
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        ensure_abgw_exists(cluster)
+        data = {}
+        if parsed_args.no_redirect:
+            data["redirect_address"] = None
+        elif parsed_args.redirect_address:
+            data["redirect_address"] = parsed_args.redirect_address
+        return cluster.abgw.client.patch(
+            "{}/reverse-proxy/upstreams/{}/".format(
+                cluster.abgw.base_url, parsed_args.upstream_id), json=data)
+
+
+class SetUpstreamOnly(ShowOne):
+    _description = 'Enable/disable upstream only parameter'
+
+    def configure_parser(self, parser):
+        group = parser.add_mutually_exclusive_group(required=True)
+        group.add_argument(
+            "--enable", required=False, action='store_true', help="Set upstream_only mode")
+        group.add_argument(
+            "--disable", required=False, action='store_true', help="Unset upstream_only mode")
+
+    def do_action(self, parsed_args):
+        if parsed_args.enable:
+            cmd = 'enable'
+        elif parsed_args.disable:
+            cmd = 'disable'
+        else:
+            raise NotImplementedError
+
+        cluster = get_cluster(self.app.vinfra)
+        ensure_abgw_exists(cluster)
+        return cluster.abgw.client.post(
+            "{}/upstream-only/{}/".format(cluster.abgw.base_url, cmd))

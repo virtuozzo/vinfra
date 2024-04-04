@@ -10,7 +10,7 @@ from cliff.app import App
 from vinfra import log
 from vinfra import Vinfra
 from vinfraclient import commandmanager
-from vinfraclient.compat import urlparse
+from vinfraclient.compat import urlparse, PLATFORM_LINUX
 from vinfraclient.session import CachedAuth
 from vinfraclient.session import Session
 
@@ -165,7 +165,7 @@ class VinfraApp(App):
 
     def run_subcommand(self, argv):
         if argv[0] == 'help':
-            # WA cliff to unable print help with optional command args
+            # WA cliff to be unable print help with optional command args
             for arg in list(argv):
                 if arg.startswith('-'):
                     argv.remove(arg)
@@ -188,13 +188,17 @@ class VinfraApp(App):
                 "and will be removed in the further. Please use a "
                 "'VINFRA_TEST_MODE' environment variable.\n")
             os.environ['VINFRA_TEST_MODE'] = os.environ['TEST_VINFRA_MODE']
-        if os.environ.get('VINFRA_TEST_MODE'):
-            # For TESTING only. Admin must be authorized early wtih session
-            # cached. Change TaskManager's 'api' for checking a task status.
-            # Added to perform testing domain users who haven't access to the
-            # task_detail endpoint.
-            self.vinfra.tasks.api = Vinfra(
-                self.vinfra.session.url, auth=CachedAuth("admin"))
+        is_default_domain = (not self.options.domain or
+                             self.options.domain == 'Default')
+        is_default_domain_admin = (is_default_domain and
+                                   self.options.username == "admin")
+        if os.environ.get('VINFRA_TEST_MODE') and not is_default_domain_admin:
+            # For TESTING only. If the user is not admin then the admin must be
+            # authorized with a session cached earlier. Change TaskManager's
+            # 'api' for checking a task status. Added to perform testing domain
+            # users who don't have access to the task_detail endpoint.
+            auth = CachedAuth("admin")
+            self.vinfra.tasks.api = Vinfra(self.vinfra.session.url, auth=auth)
 
     def _get_auth(self):
         # NOTE(akurbatov): password can be None, it will be prompted
@@ -214,7 +218,7 @@ class VinfraApp(App):
         log_file = os.path.join(os.path.expanduser("~"), 'vinfra.log')
 
         log_fd = None
-        if sys.platform == 'linux2' and os.path.exists('/etc/hci-release'):
+        if sys.platform == PLATFORM_LINUX and os.path.exists('/etc/hci-release'):
             # try system logs at first
             _log_file = '/var/log/vinfra.log'
             try:
@@ -260,7 +264,9 @@ def sigpipe_handler(signalnum, frame):
 
 def main():
     signal.signal(signal.SIGINT, sigint_handler)
-    signal.signal(signal.SIGPIPE, sigpipe_handler)
+
+    if sys.platform != 'win32':
+        signal.signal(signal.SIGPIPE, sigpipe_handler)
 
     ret = VinfraApp().run(sys.argv[1:])
 

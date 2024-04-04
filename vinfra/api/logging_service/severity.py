@@ -63,7 +63,7 @@ class LogSeverityManager(base.Manager):
         :return: List
         """
         if nodes:
-            query_params = NodesListSchema(strict=True).dump(dict(nodes=nodes)).data
+            query_params = NodesListSchema().dump(dict(nodes=nodes))
             rv = self.client.get(self.url, params=query_params)
         else:
             rv = self.client.get(self.url)
@@ -72,8 +72,8 @@ class LogSeverityManager(base.Manager):
 
     def set(self, severity, nodes=None):
         if nodes:
-            data = LogLevelSchema(strict=True).dump(dict(log_level=severity, nodes=nodes)).data
+            data = LogLevelSchema().dump(dict(log_level=severity, nodes=nodes))
         else:
-            data = LogLevelSchema(strict=True).dump(dict(log_level=severity)).data
+            data = LogLevelSchema().dump(dict(log_level=severity))
 
         self.client.put(self.url, json=data)

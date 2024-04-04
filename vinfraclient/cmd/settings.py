@@ -181,8 +181,119 @@ class ChangeCsConfig(TaskCommand):
             action="store_false",
             help="Disable RDMA."
         )
+        parser.add_argument(
+            "--force",
+            dest="force",
+            action="store_true",
+            help="Enable/disable RDMA even if a cluster exists."
+        )
+        parser.add_argument(
+            "--parallel",
+            dest="parallel",
+            action="store_true",
+            help="Enable/disable in parallel (one by one by default)."
+        )
 
     def do_action(self, parsed_args):
         return self.app.vinfra.cses_config.change_async(
-            enable=parsed_args.enable
+            enable=parsed_args.enable, force=parsed_args.force, parallel=parsed_args.parallel,
         )
+
+
+def _smtp_client_settings(parser):
+    parser.add_argument(
+        "--user-account",
+        metavar="<user-account>",
+        help="User account of the notification sender"
+    )
+    parser.add_argument(
+        "--user-password",
+        metavar="<user-password>",
+        help="Password for the user account"
+    )
+    parser.add_argument(
+        "--smtp-server",
+        metavar="<smtp-server>",
+        required=True,
+        help="DNS name of the SMTP server"
+    )
+    parser.add_argument(
+        "--smtp-port",
+        metavar="<smtp-port>",
+        required=True,
+        help="SMTP port used by the SMTP server"
+    )
+    parser.add_argument(
+        "--security",
+        dest="security",
+        required=True,
+        choices=["SSL", "STARTTLS"],
+        help="Security protocol of the SMTP server"
+    )
+
+
+def _notification_settings(parser):
+    severity_group = parser.add_mutually_exclusive_group(required=True)
+    severity_group.add_argument(
+        '--severity',
+        dest="severities",
+        action='append',
+        choices=["error", "warning", "info"],
+        help='Severity type of email notifications. This option can be used multiple times.'
+    )
+    parser.add_argument(
+        "--from",
+        dest="from_",
+        metavar="<from>",
+        help="Email address of the notification sender"
+    )
+    parser.add_argument(
+        "--sender-name",
+        dest="sender_name",
+        metavar="<sender-name>",
+        help="Notification sender name"
+    )
+    parser.add_argument(
+        "--email-recipients-list",
+        dest="email_recipients_list",
+        metavar="<email-recipients-list>",
+        type=parse_list_options,
+        help="A comma-separated list of notification recipients' emails"
+    )
+
+
+class SetEmailNotifications(ShowOne):
+    _description = "Enable email notifications."
+
+    def configure_parser(self, parser):
+        _smtp_client_settings(parser)
+        _notification_settings(parser)
+
+    def do_action(self, parsed_args):
+        return self.app.vinfra.email_notifications.update(parsed_args.from_,
+                                                          parsed_args.sender_name,
+                                                          parsed_args.email_recipients_list,
+                                                          parsed_args.smtp_server,
+                                                          parsed_args.smtp_port,
+                                                          parsed_args.security,
+                                                          alerts_severities=parsed_args.severities,
+                                                          user_account=parsed_args.user_account,
+                                                          user_password=parsed_args.user_password)
+
+
+class ShowEmailNotificationsSettings(ShowOne):
+
+    _description = "Display email notification settings."
+
+    def do_action(self, parsed_args):
+        return self.app.vinfra.email_notifications.get()
+
+
+class DisableEmailNotifications(ShowOne):
+
+    _description = "Disable email notifications."
+
+    def do_action(self, parsed_args):
+        alert_severities = []
+
+        return self.app.vinfra.email_notifications.patch(alert_severities)

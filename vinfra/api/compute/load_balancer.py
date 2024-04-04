@@ -194,17 +194,17 @@ class PoolManager(Manager):
     base_url = '/compute/lbaas/pools'
 
     def create_async(
-            self, load_balancer, name, protocol, port, lb_algorithm,
-            backend_protocol, backend_port, certificate=None,
+            self, load_balancer, protocol, port, lb_algorithm,
+            backend_protocol, backend_port, name=None, certificate=None,
             connection_limit=None, description=None, enabled=None,
             healthmonitor=None, members=None, private_key=None,
-            sticky_session=None,
+            sticky_session=None, insert_headers=None, tls_enabled=None,
+            proxy_protocol_enabled=None
     ):  # pylint: disable=too-many-arguments
         load_balancer_id = base.get_id(load_balancer)
 
         data = {
             'loadbalancer_id': load_balancer_id,
-            'name': name,
             'protocol': protocol,
             'protocol_port': port,
             'lb_algorithm': lb_algorithm,
@@ -212,6 +212,7 @@ class PoolManager(Manager):
             'backend_protocol_port': backend_port,
         }
         data.update(flatten_args(
+            name=name,
             certificate=certificate,
             connection_limit=connection_limit,
             description=description,
@@ -220,6 +221,9 @@ class PoolManager(Manager):
             members=members,
             private_key=private_key,
             sticky_session=sticky_session,
+            insert_headers=insert_headers,
+            tls_enabled=tls_enabled,
+            proxy_protocol_enabled=proxy_protocol_enabled,
         ))
         if 'healthmonitor' in data:
             if data['healthmonitor']['type'] == 'UDP':
@@ -241,18 +245,15 @@ class PoolManager(Manager):
 
     def update(
             self, pool, certificate=None, connection_limit=None,
-            backend_protocol=None, backend_port=None, description=None,
-            enabled=None, healthmonitor=None, lb_algorithm=None, members=None,
-            name=None, private_key=None, protocol=None, protocol_port=None,
-            sticky_session=None
+            description=None, enabled=None, healthmonitor=None,
+            lb_algorithm=None, members=None, name=None, private_key=None,
+            sticky_session=None, insert_headers=None, tls_enabled=None
     ):  # pylint: disable=too-many-arguments
         pool_id = base.get_id(pool)
 
         data = flatten_args(
             certificate=certificate,
             connection_limit=connection_limit,
-            backend_protocol=backend_protocol,
-            backend_protocol_port=backend_port,
             description=description,
             enabled=enabled,
             healthmonitor=healthmonitor,
@@ -260,9 +261,9 @@ class PoolManager(Manager):
             members=members,
             name=name,
             private_key=private_key,
-            protocol=protocol,
-            protocol_port=protocol_port,
             sticky_session=sticky_session,
+            insert_headers=insert_headers,
+            tls_enabled=tls_enabled,
         )
         if 'healthmonitor' in data:
             hm_type = data['healthmonitor'].get('type')

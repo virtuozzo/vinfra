@@ -159,6 +159,8 @@ class K8saasClusterManager(Manager):
         workers = 1
         if 'node_count' in json['worker_pools'][0]:
             workers = json['worker_pools'][0]['node_count']
+        elif 'min_node_count' in json['worker_pools'][0]:
+            workers = json['worker_pools'][0]['min_node_count']
         return K8saasClusterCreateTask(cluster, workers)
 
     @base.async_wait
@@ -340,7 +342,7 @@ class K8saasNodeGroupManager(Manager):
         self._patch("{}/{}".format(self.base_url, nodegroup_id), json)
         return base.ChainedTask(
             nodegroup,
-            # nodegroup doesn't provide updated_at so
+            # nodegroup doesn't provide updated_at, so
             # we use K8saasClusterStartUpdateTask
             K8saasClusterStartUpdateTask(self.cluster.manager, self.cluster),
             K8saasNodeGroupUpdateTask(self, nodegroup_id))
@@ -355,7 +357,7 @@ class K8saasNodeGroupManager(Manager):
         self._post("{}/{}/upgrade".format(self.base_url, nodegroup_id), json)
         return base.ChainedTask(
             nodegroup,
-            # nodegroup doesn't provide updated_at so
+            # nodegroup doesn't provide updated_at, so
             # we use K8saasClusterStartUpdateTask
             K8saasClusterStartUpdateTask(self.cluster.manager, self.cluster),
             K8saasNodeGroupUpgradeTask(self, nodegroup_id))

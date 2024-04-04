@@ -3,7 +3,7 @@ import logging
 import re
 import time
 
-from vinfra import exceptions
+from vinfra import compat, exceptions
 
 LOG = logging.getLogger(__name__)
 CAMELCASE_REGEX = re.compile(r'[A-Z](?:[a-z0-9]+|[A-Z]*(?=[A-Z]|$))')
@@ -234,7 +234,7 @@ class Manager(VinfraApi):
 
     @staticmethod
     def _format_sort_param(sort):
-        if isinstance(sort, (str, basestring)):
+        if isinstance(sort, (str, compat.basestring)):
             sort = [sort]
 
         sort_array = []
@@ -253,7 +253,6 @@ class Manager(VinfraApi):
             else:
                 sort_array.append(sort_key)
         return ','.join(sort_array)
-
 
     def _list(self, url, limit=None, marker=None, filters=None, sort=None,
               **kwargs):
@@ -280,13 +279,16 @@ class Manager(VinfraApi):
             if not iter_data or limit != -1:
                 break
 
-            marker = data[-1].get(self.resource_class.ID_ATTR)
+            marker = self._get_marker_from_data(data)
             if not marker:
                 LOG.warning('Cannot find resource ID attribute.')
                 break
 
         items = [self.resource_class(self, res) for res in data or []]
         return items
+
+    def _get_marker_from_data(self, data):
+        return data[-1].get(self.resource_class.ID_ATTR)
 
     def _get(self, url, **kwargs):
         data = self.client.get(url, **kwargs)

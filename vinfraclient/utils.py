@@ -3,6 +3,7 @@ import logging
 import collections
 import getpass
 import inspect
+import itertools
 import json
 import os
 import re
@@ -299,22 +300,24 @@ class SizeValue(object):
 
     def __init__(self, size):
         self.value = None
-        if isinstance(size, (int, long, float)):
+        if isinstance(size, (int, compat.long, float)):
             self.value = size
-        elif isinstance(size, (str, basestring)):
-            for mul, suffix_list in self._mapping.items():
-                for suffix in suffix_list:
-                    m = re.search(r'^(\d+)%s$' % suffix, size.lower())
-                    if m:
-                        self.value = int(m.group(1)) * mul
-                        break
-                if self.value:
-                    break
-        if self.value is None:
-            raise ValueError('Wrong size value: %s %s' % (size, type(size)))
+        elif isinstance(size, (str, compat.basestring)):
+            if size == '-1':
+                self.value = -1
+            else:
+                self.value = self._parse(size)
+
+    def _parse(self, size):
+        for mul, suffix_list in self._mapping.items():
+            for suffix in suffix_list:
+                m = re.search(r'^(\d+)%s$' % suffix, size.lower())
+                if m:
+                    return int(m.group(1)) * mul
+        raise ValueError('Wrong size value: %s' % size)
 
     def humanize(self, suffix='B'):
-        #if self.value == 0:
+        # if self.value == 0:
         #    return '0'
 
         num = self.value
@@ -323,6 +326,30 @@ class SizeValue(object):
                 return "%3.1f%s%s" % (num, unit, suffix)
             num /= 1024.0
         return "%.1f%s%s" % (num, 'Ei', suffix)
+
+
+class IntervalValue(object):
+    _suffixes = [
+        [' hours', 'H', 'h', 'hr', 'hours', 'hour', ''],
+        [' days', 'D', 'd', 'days', 'day'],
+        [' weeks', 'W', 'w', 'weeks', 'week'],
+    ]
+    _all_suffixes = set(itertools.chain(*_suffixes))
+
+    def __init__(self, value):
+        self.value = self._parse(value)
+
+    def _parse(self, value):
+        if not value:
+            return value
+        match = re.match(r'^(\d+) *(.*)$', value)
+        if match and match.group(2) in self._all_suffixes:
+            value, suffix = match.groups()
+            for group in self._suffixes:
+                if suffix in group:
+                    return value + group[0]
+
+        raise ValueError('Wrong interval value: "%s"' % value)
 
 
 class FakeProgressBarProcess(object):
@@ -380,15 +407,16 @@ def join_options(options_list, unset_options=None):
 
     return rv or None
 
+
 def validate_resources_from_operator(manager, value):
     resources = []
     op = ''
     if ':' in value:
         op, vals = value.split(':', 1)
         op += ':'
-        resources = vals.split(',')
+        resources.extend(vals.split(','))
     else:
-        resources = [value]
+        resources.append(value)
 
     resources = find_resources(manager, resources)
     return '{}{}'.format(op, ','.join([r.id for r in resources]))

@@ -20,6 +20,9 @@ class CreateCluster(TaskCommand):
 
     def configure_parser(self, parser):
         storage_policy_options(parser, required=False, use_defaults=True)
+        storage_policy_options(parser, required=False, use_defaults=False,
+                               encoding=False, replicas=False, failure_domain=False,
+                               prefix='metadata-', dist_prefix='md_')
 
         ssl_group = parser.add_mutually_exclusive_group()
         ssl_group.add_argument(
@@ -81,6 +84,11 @@ class CreateCluster(TaskCommand):
             metavar="<domain>",
             required=True,
             help="DNS name S3 endpoint"
+        )
+        parser.add_argument(
+            "--s3gw-count",
+            metavar="<count>",
+            help="Number of S3 gateways."
         )
         parser.add_argument(
             "--os-count",
@@ -164,6 +172,7 @@ class CreateCluster(TaskCommand):
         return cluster.s3.create_async(
             nodes, parsed_args.s3gw_domain, parsed_args.tier,
             parsed_args.redundancy, parsed_args.failure_domain,
+            md_tier=parsed_args.md_tier, s3gw_count=parsed_args.s3gw_count,
             gen_cert=gen_cert, cert=cert_stream, key=key_stream,
             password=password, insecure=parsed_args.insecure,
             notary_provider=notary_provider,
@@ -213,6 +222,13 @@ class AddNode(TaskCommand):
             help="A comma-separated list of node hostnames or IDs"
         )
         parser.add_argument(
+            "--s3gw-count",
+            metavar="<count>",
+            type=int,
+            default=None,
+            help="The number of S3 gateways"
+        )
+        parser.add_argument(
             "--force",
             dest="ignore_ram_reservation",
             action="store_true",
@@ -224,7 +240,35 @@ class AddNode(TaskCommand):
         cluster = get_cluster(self.app.vinfra)
         nodes = [find_resource(self.app.vinfra.nodes, node)
                  for node in parsed_args.nodes]
-        return cluster.s3.assign_nodes_async(nodes, parsed_args.ignore_ram_reservation)
+        return cluster.s3.assign_nodes_async(
+            nodes,
+            ignore_ram_reservation=parsed_args.ignore_ram_reservation,
+            s3gw_count=parsed_args.s3gw_count)
+
+
+class ChangeNode(TaskCommand):
+    _description = "Add one or more nodes to the S3 cluster."
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "--nodes",
+            metavar="<nodes>",
+            type=parse_list_options,
+            required=True,
+            help="A comma-separated list of node hostnames or IDs"
+        )
+        parser.add_argument(
+            "--s3gw-count",
+            metavar="<count>",
+            required=True,
+            help="Number of s3 gateways."
+        )
+
+    def do_action(self, parsed_args):
+        cluster = get_cluster(self.app.vinfra)
+        nodes = [find_resource(self.app.vinfra.nodes, node)
+                 for node in parsed_args.nodes]
+        return cluster.s3.change_nodes_async(nodes, parsed_args.s3gw_count)
 
 
 class ReleaseNode(TaskCommand):
@@ -341,6 +385,9 @@ class ChangeCluster(TaskCommand):
 
     def configure_parser(self, parser):
         storage_policy_options(parser, required=False, use_defaults=False)
+        storage_policy_options(parser, required=False, use_defaults=False,
+                               encoding=False, replicas=False, failure_domain=False,
+                               prefix='metadata-', dist_prefix='md_')
         ssl_group = parser.add_mutually_exclusive_group()
         ssl_group.add_argument(
             "--self-signed",
@@ -393,6 +440,12 @@ class ChangeCluster(TaskCommand):
             help="Notary user key (only used with --np-uri option).",
             default=None
         )
+        parser.add_argument(
+            "--s3gw-count",
+            metavar="<count>",
+            help="Set the number of S3 gateways.",
+            default=None
+        )
 
     @staticmethod
     def _get_stream(file_name):
@@ -403,11 +456,13 @@ class ChangeCluster(TaskCommand):
                 'Failed to open "{}" ({}).'.format(file_name, err))
 
     def do_action(self, parsed_args):
+
         if all(parsed_arg is None for parsed_arg in (
                 parsed_args.failure_domain, parsed_args.tier, parsed_args.redundancy,
                 parsed_args.self_signed, parsed_args.insecure,
                 parsed_args.key_file, parsed_args.cert_file, parsed_args.password,
                 parsed_args.np_uri, parsed_args.np_user_key,
+                parsed_args.s3gw_count, parsed_args.md_tier
         )):
             raise exceptions.ValidationError('Nothing to change. Parameters are empty.')
         if parsed_args.key_file and not parsed_args.cert_file:
@@ -443,7 +498,9 @@ class ChangeCluster(TaskCommand):
             failure_domain=parsed_args.failure_domain,
             tier=parsed_args.tier,
             redundancy=parsed_args.redundancy,
+            md_tier=parsed_args.md_tier,
             gen_cert=gen_cert, cert=cert_stream, key=key_stream,
             password=password, insecure=parsed_args.insecure,
-            notary_provider=notary_provider
+            notary_provider=notary_provider,
+            s3gw_count=parsed_args.s3gw_count
         )

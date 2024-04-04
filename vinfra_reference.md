@@ -342,6 +342,9 @@ To get a list of all supported commands and their descriptions, you can run `vin
 - [vinfra service compute node release](#vinfra-service-compute-node-release)
 - [vinfra service compute node show](#vinfra-service-compute-node-show)
 - [vinfra service compute node unfence](#vinfra-service-compute-node-unfence)
+- [vinfra service compute notification set](#vinfra-service-compute-notification-set)
+- [vinfra service compute notification disable](#vinfra-service-compute-notification-disable)
+- [vinfra service compute notification show](#vinfra-service-compute-notification-show)
 - [vinfra service compute placement assign](#vinfra-service-compute-placement-assign)
 - [vinfra service compute placement create](#vinfra-service-compute-placement-create)
 - [vinfra service compute placement delete](#vinfra-service-compute-placement-delete)
@@ -7777,10 +7780,10 @@ Enable metering services.
 
 **--notification-forwarding \<transport-url\>**  
 Enable notification forwarding through the specified transport URL.  
-Transport URL format: `driver://[user:pass@]host:port[,[userN:passN@]hostN:portN]?query`  
+Transport URL format: `driver://[user:pass@]host:port[,[userN:passN@]hostN:portN]`   
 Supported drivers: ampq, kafka, rabbit.  
-Query params: topic - topic name, driver - messaging driver, possible values are messaging, messagingv2, routing, log, test, noop.  
-Example: `kafka://10.10.10.10:9092?topic=notifications`
+Note: Messages will be published to "notifications" topic  
+Example: `kafka://10.10.10.10:9092` 
 
 **--disable-notification-forwarding**  
 Disable notification forwarding
@@ -9600,7 +9603,7 @@ A timeout for the operation to complete if `--wait` is specified, in seconds (de
 Fence a compute node.
 
 ```
-usage: vinfra service compute node fence [--force-down] [--reason <reason>]
+usage: vinfra service compute node fence [--reason <reason>]
                                          <node>
 ```
 
@@ -9610,9 +9613,6 @@ usage: vinfra service compute node fence [--force-down] [--reason <reason>]
 Node ID or hostname
 
 ### Optional arguments:
-
-**--force-down**  
-Forcefully mark the node as down.
 
 **--reason \<reason\>**  
 The reason for disabling the compute node
@@ -9701,6 +9701,67 @@ usage: vinfra service compute node unfence <node>
 
 **\<node\>**  
 Node ID or hostname
+
+---
+
+## vinfra service compute notification set
+
+Set notification-forwarding options
+
+```
+usage: vinfra service compute notification set [--transport-url <transport-url>]
+                                           [--kafka-security-protocol {PLAINTEXT,SASL_PLAINTEXT,SSL,SASL_SSL}]
+                                           [--kafka-sasl-mechanism {SCRAM-SHA-256,SCRAM-SHA-512}] 
+                                           [--kafka-ssl-ca-cert <path>] 
+                                           [--kafka-ssl-client-cert <path>]
+```
+
+### Optional arguments:
+
+**--transport-url \<transport-url\>**   
+Enable notification forwarding through the specified transport URL.  
+Transport URL format: `driver://[user:pass@]host:port[,[userN:passN@]hostN:portN]`   
+Supported drivers: ampq, kafka, rabbit.  
+Note: Messages will be published to "notifications" topic  
+Example: `kafka://10.10.10.10:9092` 
+
+**--kafka-security-protocol \{PLAINTEXT,SASL_PLAINTEXT,SSL,SASL_SSL\}**   
+Protocol used to communicate with brokers.   
+  
+**--kafka-sasl-mechanism \{SCRAM-SHA-256,SCRAM-SHA-512\}**  
+Authentication mechanism to use for the SASL protocol    
+
+**--kafka-ssl-ca-cert \<path\>**    
+Path to a PEM file with the CA certificate that is used to verify the server
+
+**--kafka-ssl-client-cert \<path\>**    
+Path to a PEM file with the SSL client certificate that is used for client authentication
+
+## vinfra service compute notification disable
+
+Disable kafka encryption or notification-forwarding 
+
+```
+usage: vinfra service compute notification disable [--notification-forwarding | --kafka-encryption]
+
+```
+
+### Optional arguments:
+**--notification-forwarding**   
+Disable notification forwarding 
+
+**--kafka-encryption**  
+Disable encryption of kafka messaging.  
+The Kafka security protocol will be set to the default value 'PLAINTEXT' 
+
+
+## vinfra service compute notification show
+
+Show notification forwarding options
+
+```
+usage: vinfra service compute notification show
+```
 
 ---
 
@@ -10479,8 +10540,8 @@ Create a compute server with a specified network. Specify this option multiple t
 
 **--volume \<source=source[,id=id,key1=value1,key2=value2...]\>**  
 Create a compute server with a specified volume. Specify this option multiple times to create multiple volumes.  
-**source**: source type ('volume', 'image', 'snapshot', or 'blank');  
-**id**: resource ID or name for the specified source type (required for source types 'volume', 'image', and 'snapshot');  
+**source**: source type ('volume', 'image', 'snapshot', 'backup', or 'blank');  
+**id**: resource ID or name for the specified source type (required for source types 'volume', 'image', 'snapshot', and 'backup');  
 **size**: block device size, in gigabytes (required for source types 'image' and 'blank');  
 **boot-index**: block device boot index (required for multiple volumes with source type 'volume');  
 **bus**: block device controller type ('ide', 'usb', 'virtio', 'scsi, or 'sata') (optional);  
@@ -11488,10 +11549,10 @@ Enable metering services.
 
 **--notification-forwarding \<transport-url\>**  
 Enable notification forwarding through the specified transport URL.  
-Transport URL format: `driver://[user:pass@]host:port[,[userN:passN@]hostN:portN]?query`  
+Transport URL format: `driver://[user:pass@]host:port[,[userN:passN@]hostN:portN]`   
 Supported drivers: ampq, kafka, rabbit.  
-Query params: topic - topic name, driver - messaging driver, possible values are messaging, messagingv2, routing, log, test, noop.  
-Example: `kafka://10.10.10.10:9092?topic=notifications`
+Note: Messages will be published to "notifications" topic  
+Example: `kafka://10.10.10.10:9092` 
 
 **--disable-notification-forwarding**  
 Disable notification forwarding

@@ -1,4 +1,5 @@
 import argparse
+
 from vinfraclient.argtypes import parse_list_options
 from vinfraclient.cmd.base import ShowOne, TaskCommand
 from vinfraclient.utils import find_resource, find_resources
@@ -163,21 +164,41 @@ class AddNodeToHA(TaskCommand):
 
 
 class RemoveNodeFromHA(TaskCommand):
-    _description = "Remove a node from the HA configuration."
+    _description = "Remove node(s) from the HA configuration."
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "nodes",
+            metavar="<node>",
+            nargs='+',
+            help="Node ID(s) or hostname(s) to be removed. Note that "
+                 "the HA configuration must have at least 3 nodes to "
+                 "be operational."
+        )
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            default=None,
+            help="Skip the compute cluster state and forcibly remove the "
+                 "node(s). This option is required when removing multiple "
+                 "nodes or offline nodes."
+        )
+
+    def do_action(self, parsed_args):
+        nodes = find_resources(self.app.vinfra.nodes, parsed_args.nodes)
+        return self.app.vinfra.ha.remove_node_async(nodes=nodes,
+                                                    force=parsed_args.force)
+
+
+class HaSwitchPrimary(TaskCommand):
+    _description = "Change the primary management node in the HA configuration."
 
     def configure_parser(self, parser):
         parser.add_argument(
             "node",
             metavar="<node>",
-            help="Node ID or hostname to remove")
-        parser.add_argument(
-            "--force",
-            action="store_true",
-            default=None,
-            help="Skip the compute cluster state and forcibly remove the node"
-        )
+            help="New primary node ID")
 
     def do_action(self, parsed_args):
         node = find_resource(self.app.vinfra.nodes, parsed_args.node)
-        return self.app.vinfra.ha.remove_node_async(node=node,
-                                                    force=parsed_args.force)
+        return self.app.vinfra.ha.switch_master_async(node=node)

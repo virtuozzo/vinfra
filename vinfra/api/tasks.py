@@ -1,6 +1,8 @@
 import logging
 import time
 
+import requests
+
 from vinfra import exceptions
 from vinfra.api import base
 
@@ -31,7 +33,14 @@ class TaskManager(base.Manager):
 
     def get(self, task, **kwargs):
         url = "/tasks/{}".format(base.get_id(task))
-        return self._get(url, **kwargs)
+        retry_count = 0
+        while retry_count < 5:
+            try:
+                return self._get(url, **kwargs)
+            except requests.exceptions.ReadTimeout:
+                if retry_count >= 3:
+                    raise
+                retry_count += 1
 
     # pylint: disable=no-member
     def wait(self, task, timeout=None, request_id=None, **kwargs):
@@ -39,7 +48,7 @@ class TaskManager(base.Manager):
         stime = time.time()
         while time.time() - stime < wait_timeout:
             task = self.get(task, request_id=request_id, **kwargs)
-            if task.state in ('running', 'scheduled', 'cancelling'):
+            if task.state in ('running', 'scheduled', 'cancelling', 'paused'):
                 time.sleep(1)
                 continue
 

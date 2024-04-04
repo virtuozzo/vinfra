@@ -14,7 +14,7 @@ from vinfraclient.cmd.base import (
     flatten_args,
     KeyValuePair
 )
-from vinfraclient.exceptions import ValidationError
+from vinfraclient.exceptions import CommandError, ValidationError
 from vinfraclient.formatters import columns as fmt_columns
 from vinfraclient import utils
 
@@ -166,7 +166,9 @@ def get_network_options_dict(parsed_args, network_id, vinfra):
 
 
 def subparse_network(value):
+
     class _SubParser(argparse.ArgumentParser):
+
         def error(self, message):
             message = message.replace('--', '')
             raise argparse.ArgumentTypeError(message)
@@ -206,12 +208,14 @@ def get_volume_from_dict(volume_dict):
         'boot-index': 'boot_index',
         'rm': 'delete_on_termination',
         'storage-policy': 'storage_policy_name',
+        'logical_block_size': 'logical_block_size',
+        'physical_block_size': 'physical_block_size'
     }
 
     source = volume_dict.get('source')
     if source is None:
         raise ValidationError("--volume 'source' is required")
-    if source not in ['volume', 'image', 'snapshot', 'blank']:
+    if source not in ['volume', 'image', 'snapshot', 'blank', 'backup']:
         raise ValidationError(
             "Invalid argument for --volume 'source': {!r}.".format(source))
 
@@ -306,7 +310,7 @@ class ListServer(Lister):
             '--id',
             metavar='<id>',
             action='filter',
-            operators='in',
+            operators=('in', 'contains'),
             help='Show a server with the specified ID or list servers using '
                  'a filter.'
         )
@@ -378,7 +382,7 @@ class ListServer(Lister):
         if parsed_args.status:
             filters['status'] = parsed_args.status
         if parsed_args.task_status:
-            filters['task_status'] = parsed_args.task_status
+            filters['task_state'] = parsed_args.task_status
         if parsed_args.host:
             filters['host'] = parsed_args.host
         if parsed_args.traits:
@@ -478,11 +482,11 @@ class CreateServer(TaskCommand):
             required=True,
             help="Create a compute server with a specified volume. Specify "
                  "this option multiple times to create multiple volumes.\n"
-                 "source: source type ('volume', 'image', 'snapshot', or "
-                 "'blank');\n"
+                 "source: source type ('volume', 'image', 'snapshot', "
+                 "'backup', or 'blank');\n"
                  "id: resource ID or name for the specified source type "
-                 "(required for source types 'volume', 'image', and "
-                 "'snapshot');\n"
+                 "(required for source types 'volume', 'image', "
+                 "'snapshot', and 'backup');\n"
                  "size: block device size, in gigabytes (required "
                  "for source types 'image' and 'blank');\n"
                  "boot-index: block device boot index (required for multiple "
@@ -565,7 +569,7 @@ class CreateServer(TaskCommand):
         kwargs = {}
         if parsed_args.user_data:
             try:
-                data = open(parsed_args.user_data).read()
+                data = open(parsed_args.user_data, 'rb').read()
             except IOError as err:
                 args = parsed_args.user_data, err
                 raise ValidationError('Failed to open {} ({})'.format(*args))
@@ -602,31 +606,40 @@ class SetServer(ShowOne):
         parser.add_argument(
             "--name",
             metavar="<name>",
+            default=None,
             help="A new name for the compute server"
         )
         parser.add_argument(
             "--description",
             metavar="<description>",
+            default=None,
             help="A new description for the compute server"
         )
         parser.add_argument(
             "--ha-enabled",
             metavar="<ha_enabled>",
+            default=None,
             help="Enable HA for the compute server"
+        )
+        parser.add_argument(
+            "--password",
+            action="store_true",
+            help="Request the password from stdin. "
+                 "This option must be used separately from other options."
         )
         live_resize_group = parser.add_mutually_exclusive_group()
         live_resize_group.add_argument(
             "--allow-live-resize",
             dest="allow_live_resize",
             action='store_true',
-            default=False,
+            default=None,
             help="Allow online resize for the compute server"
         )
         live_resize_group.add_argument(
             "--deny-live-resize",
             dest="allow_live_resize",
-            action="store_const",
-            const=False,
+            action="store_false",
+            default=None,
             help="Deny online resize for the compute server"
         )
         placement_group = parser.add_mutually_exclusive_group()
@@ -651,16 +664,31 @@ class SetServer(ShowOne):
         compute = self.app.vinfra.compute
         server = utils.find_resource(compute.servers, parsed_args.server)
 
+        kwargs = {}
+        if parsed_args.name is not None:
+            kwargs['name'] = parsed_args.name
+        if parsed_args.description is not None:
+            kwargs['description'] = parsed_args.description
+        if parsed_args.ha_enabled is not None:
+            kwargs['ha_enabled'] = parsed_args.ha_enabled
+        if parsed_args.allow_live_resize is not None:
+            kwargs['allow_live_resize'] = parsed_args.allow_live_resize
+
         traits = parsed_args.placements
         if traits is not None:
             if traits:
                 traits = utils.find_resources(compute.traits, traits)
+            kwargs['traits'] = traits
 
-        res = server.update(name=parsed_args.name,
-                            description=parsed_args.description,
-                            ha_enabled=parsed_args.ha_enabled,
-                            allow_live_resize=parsed_args.allow_live_resize,
-                            traits=traits)
+        if parsed_args.password:
+            if kwargs:
+                raise CommandError(
+                    "Password must be specified separately from other options"
+                )
+            password = utils.get_password()
+            return server.set_password(password)
+
+        res = server.update(**kwargs)
         return res
 
 

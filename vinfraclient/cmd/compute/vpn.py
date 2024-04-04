@@ -5,6 +5,7 @@ from vinfraclient import utils
 
 
 class InlineParser(argparse.ArgumentParser):
+
     def __init__(self):
         super(InlineParser, self).__init__(add_help=False)
 
@@ -79,7 +80,7 @@ class PolicyInlineParser(InlineParser):
         return {'value': value}
 
     def parse_value(self, value):
-        if not '=' in value:
+        if '=' not in value:
             value = 'id={}'.format(value)
         return super(PolicyInlineParser, self).parse_value(value)
 
@@ -118,7 +119,7 @@ class EndpointGroupInlineParser(InlineParser):
             )
 
     def parse_value(self, value):
-        if not '=' in value:
+        if '=' not in value:
             value = 'id={}'.format(value)
         parsed_args = super(EndpointGroupInlineParser, self).parse_value(value)
         if parsed_args.name and not parsed_args.endpoints:
@@ -214,6 +215,22 @@ class CreateUpdateMixin(object):
             help=("Remote endpoint group parameters:\n" +
                   peer_endpoint_group_parser.format_help())
         )
+        split_selector_group = (
+            parser.add_mutually_exclusive_group(required=False))
+        split_selector_group.add_argument(
+            "--split-selector",
+            dest='split_selector',
+            action='store_true',
+            default=None,
+            help="Configure multiple child SAs for each traffic selector",
+        )
+        split_selector_group.add_argument(
+            "--no-split-selector",
+            dest='split_selector',
+            action='store_false',
+            default=None,
+            help="Configure one child SA with multiple traffic selector",
+        )
 
 
 class CreateIPsecSiteConnection(base.ShowOne, CreateUpdateMixin):
@@ -271,8 +288,9 @@ class CreateIPsecSiteConnection(base.ShowOne, CreateUpdateMixin):
             'peer_address': parsed_args.peer_address,
             'psk': parsed_args.psk,
         }
-        options_args = base.flatten_args(parsed_args,
-                                         ['peer_id', 'local_id', 'initiator'])
+        other_opts = ['peer_id', 'local_id', 'initiator', 'split_selector']
+        options_args = base.flatten_args(parsed_args, other_opts)
+
         if parsed_args.dpd:
             options_args['dpd'] = base.flatten_args(parsed_args.dpd,
                                                     parsed_args.dpd.__dict__)
@@ -339,9 +357,10 @@ class SetIPsecSiteConnection(base.ShowOne, CreateUpdateMixin):
             self.app.vinfra.compute.vpn.ipsec_site_connections,
             parsed_args.ipsec_site_connection)
 
-        new_ipsec_site_connection = base.flatten_args(
-            parsed_args,
-            ['name', 'peer_address', 'peer_id', 'local_id', 'initiator', 'psk'])
+        other_opts = ['name', 'peer_address', 'peer_id', 'local_id',
+                      'initiator', 'psk', 'split_selector']
+        new_ipsec_site_connection = base.flatten_args(parsed_args, other_opts)
+
         if parsed_args.dpd:
             new_ipsec_site_connection['dpd'] = (
                 base.flatten_args(parsed_args.dpd, parsed_args.dpd.__dict__))

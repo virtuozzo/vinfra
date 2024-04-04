@@ -3,10 +3,11 @@ import hashlib
 import json
 import os
 
-from vinfra import exceptions
+from requests.exceptions import HTTPError
+
+from vinfra import compat, exceptions
 from vinfra.api import base
 from vinfra.api.compute.base import Manager
-from vinfra.compat import md5
 from vinfra.utils import flatten_args
 
 
@@ -33,7 +34,18 @@ class ImageUploadTask(base.PollTask):
         return resource
 
     def poll(self):
-        self.resource = self.resource.get()
+        # 404 signifies that image was deleted by cinder due to upload to image failure
+        try:
+            self.resource = self.resource.get()
+        except HTTPError as err:
+            if err.response.status_code == 404:
+                raise exceptions.VinfraError(
+                    "Failed to upload volume/snapshot as image. If uploading "
+                    "volume/snapshot from NFS compute storage, please ensure "
+                    "volume/snapshot is not in-use of active VM."
+                )
+            raise
+
         status = self.resource.status
 
         if status in ['creating', 'queued', 'saving']:
@@ -123,7 +135,7 @@ class ImageManager(Manager):
             protected=protected,
             visibility=visibility,
             tags=(
-                base64.b64encode(json.dumps(tags))
+                base64.b64encode(json.dumps(tags).encode('utf-8')).decode('utf-8')
                 if tags is not None else None
             ),
             hw_firmware_type=hw_firmware_type,
@@ -165,7 +177,7 @@ class ImageManager(Manager):
         close_fd = None
         if not hasattr(fdst, 'write'):
             # Looks like fdst is not stream. Make stream.
-            if not isinstance(fdst, basestring):
+            if not isinstance(fdst, compat.basestring):
                 raise ValueError("fdst must be filepath or file-like object, "
                                  "got {}".format(fdst.__class__.__name__))
             if os.path.exists(fdst):
@@ -176,7 +188,7 @@ class ImageManager(Manager):
         len_expected = int(resp.headers['Content-Length'])
         md5_expected = resp.headers['Content-Md5']
 
-        md5ob = md5()
+        md5ob = hashlib.md5()  # nosec
         while True:
             buf = resp.raw.read(16 * 1024)
             if not buf:
@@ -185,7 +197,7 @@ class ImageManager(Manager):
             md5ob.update(buf)
 
         if fdst.tell() != len_expected:
-            msg = 'File length mismatch (epxect {}, got {})'.format(
+            msg = 'File length mismatch (expect {}, got {})'.format(
                 len_expected, fdst.tell())
             raise exceptions.VinfraError(msg)
 

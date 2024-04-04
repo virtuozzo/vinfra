@@ -16,7 +16,7 @@ from six.moves import http_client
 from urllib3.connection import HTTPConnection
 
 from vinfra import exceptions
-from vinfra.compat import addinfourl, urlparse, HTTPResponse
+from vinfra.compat import addinfourl, urlparse, HTTPResponse, PLATFORM_LINUX
 
 LOG = logging.getLogger(__name__)
 
@@ -131,9 +131,9 @@ class Auth(object):
                             json=request_json, log=False).json()
         self.domain_id = resp['domain_id']
         self.token = resp['token']
-        self.make_scoped_authenicate(session)
+        self.make_scoped_authenticate(session)
 
-    def make_scoped_authenicate(self, session):
+    def make_scoped_authenticate(self, session):
         if self.project:
             data = self._make_project_authenticate(session)
             self.scoped_token = data['token']
@@ -143,7 +143,7 @@ class Auth(object):
             self.make_authenticate(session)
 
         if self.needs_scoped_reauthenticate():
-            self.make_scoped_authenicate(session)
+            self.make_scoped_authenticate(session)
 
         headers = {}
         if self.scoped_token:
@@ -155,7 +155,7 @@ class Auth(object):
 class TCPKeepAliveHTTPAdapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):  # pylint: disable=arguments-differ
         options = list(HTTPConnection.default_socket_options)
-        if sys.platform == 'linux2':
+        if sys.platform == PLATFORM_LINUX:
             options.extend([
                 (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
                 (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60),
@@ -174,11 +174,13 @@ class TCPKeepAliveHTTPAdapter(HTTPAdapter):
 
 class Session(object):
     def __init__(self, url, auth=None, session=None):
-        """ Session controlled communication client.
+        """Session controlled communication client.
 
         :param url: backend url
         :param auth: session authentication implementation
         :type auth: vinfra.session.BaseAuth
+        :param session: session for rest requests
+        :type session: requests.Session
         """
         self.url = url
         self.auth = auth
@@ -237,9 +239,9 @@ class Session(object):
             data = json.loads(body)
 
             # /api/v2/login
-            #if 'token' in data:
+            # if 'token' in data:
             #    data['token'] = '<removed>'
-            #if 'scoped_token' in data:
+            # if 'scoped_token' in data:
             #    data['scoped_token'] = '<removed>'
 
             return self._json.encode(data)
@@ -289,8 +291,7 @@ class Session(object):
         else:
             text = 'Omitted, Content-Type is set to {}.'.format(content_type)
 
-        string_parts = ['RESP:']
-        string_parts.append('[{}]'.format(resp.status_code))
+        string_parts = ['RESP:', '[{}]'.format(resp.status_code)]
 
         for header_name, header_value in resp.headers.items():
             string_parts.append('{}: {}'.format(
@@ -299,6 +300,12 @@ class Session(object):
         string_parts.append('\nRESP BODY: {}\n'.format(text))
 
         LOG.debug(' '.join(string_parts))
+
+    def refresh_auth(self, headers):
+        if not self.auth:
+            raise Exception("auth attribute must be set")
+        auth_headers = self.auth.get_headers(self)
+        headers.update(auth_headers)
 
     def request(self, method, url, json=None, authenticated=True,
                 raise_exc=True, request_id=None, **kwargs):
@@ -316,10 +323,7 @@ class Session(object):
             headers['X-Requested-With'] = 'XMLHttpRequest'
 
         if authenticated:
-            if not self.auth:
-                raise Exception("auth attribute must be set")
-            auth_headers = self.auth.get_headers(self)
-            headers.update(auth_headers)
+            self.refresh_auth(headers)
 
         if not urlparse(url).netloc:
             url = "{}/{}".format(self.url.rstrip('/'), url.lstrip('/'))
@@ -328,6 +332,10 @@ class Session(object):
             headers.setdefault('Content-Type', 'application/json')
 
         resp = self._send_request(method, url, json=json, **kwargs)
+        if resp.status_code == 401 and authenticated:
+            self.refresh_auth(headers)
+            resp = self._send_request(method, url, json=json, **kwargs)
+
         if raise_exc:
             resp.raise_for_status()
 
@@ -350,8 +358,8 @@ class Session(object):
 
     @staticmethod
     def _is_connect_error(err):
-        return  isinstance(err, (requests.exceptions.ConnectionError,
-                                 requests.exceptions.Timeout))
+        return isinstance(err, (requests.exceptions.ConnectionError,
+                                requests.exceptions.Timeout))
 
     def _send_request(self, method, url, json=None, log=True,
                       connect_retries=0, connect_retry_delay=0.5,

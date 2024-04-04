@@ -1,11 +1,9 @@
+import json
 from vinfra.api import base
 
 
-class Cluster(object):
+class Cluster(base.VinfraApi):
     base_url = "/compute/cluster"
-
-    def __init__(self, api):
-        self.api = api
 
     def get(self):
         data = self.api.client.get(self.base_url)
@@ -13,12 +11,11 @@ class Cluster(object):
         return data
 
     def create_async(self, nodes, external_network=None, cpu_model=None,
-                     force=None, enable_k8saas=None, enable_lbaas=None,
-                     enable_metering=None, custom_params=None,
+                     force=None, enable_features=None, custom_params=None,
                      notification_forwarding=None,
                      external_address=None, pci_passthrough=None,
                      default_storage_policy=None, scheduler=None,
-                     cpu_features=None):
+                     cpu_features=None, backup=None):
         data = {'nodes': [base.get_id(v) for v in nodes]}
         if external_network is not None:
             data['external_network'] = external_network
@@ -27,13 +24,6 @@ class Cluster(object):
         if force is not None:
             data['force'] = force
 
-        enable_features = []
-        if enable_k8saas is not None:
-            enable_features.append('k8saas')
-        if enable_lbaas is not None:
-            enable_features.append('lbaas')
-        if enable_metering is not None:
-            enable_features.append('metering')
         if enable_features:
             data['enable_features'] = enable_features
 
@@ -67,6 +57,9 @@ class Cluster(object):
 
         if cpu_features is not None:
             data['cpu_features'] = cpu_features
+
+        if backup is not None:
+            data['backup'] = backup
 
         # Creating compute cluster may lead to connection errors due to ovs
         # bridge building. Take it into account by setting a connect_retries
@@ -102,28 +95,21 @@ class Cluster(object):
     def info(self):
         return self.api.client.get("%s/info" % self.base_url)
 
-    def reconfigure_async(self, cpu_model=None, enable_k8saas=None,
-                          enable_lbaas=None, enable_metering=None,
+    def reconfigure_async(self, nodes=None, cpu_model=None, enable_features=None,
                           custom_params=None, notification_forwarding=None,
                           external_address=None, early_access=None,
                           force=None, pci_passthrough=None,
-                          scheduler=None, cpu_features=None):
+                          scheduler=None, cpu_features=None,
+                          backup=None):
         data = {}
         if cpu_model is not None:
+            if nodes is not None:
+                data = {'nodes': [base.get_id(v) for v in nodes]}
             data['cpu_model'] = cpu_model
         if early_access is not None:
             data['early_access'] = early_access
-
-        enable_features = []
-        if enable_k8saas is not None:
-            enable_features.append('k8saas')
-        if enable_lbaas is not None:
-            enable_features.append('lbaas')
-        if enable_metering is not None:
-            enable_features.append('metering')
         if enable_features:
             data['enable_features'] = enable_features
-
         if custom_params is not None:
             data['custom_params'] = custom_params
         if notification_forwarding is not None:
@@ -139,6 +125,8 @@ class Cluster(object):
             data['scheduler'] = scheduler
         if cpu_features is not None:
             data['cpu_features'] = cpu_features
+        if backup is not None:
+            data['backup'] = backup
 
         return self.api.client.patch_async(self.base_url, json=data)
 
@@ -160,3 +148,44 @@ class Cluster(object):
         id_string = ('/' + task_id + '/') if task_id else '/'
         url = "{}/tasks{}abort/".format(self.base_url, id_string)
         return self.api.client.post(url)
+
+    def reconfigure_notification(self, notification=None):
+        data = {}
+        kafka_ssl_ca_cert = None
+        kafka_ssl_client_cert = None
+        # Notification forwarding to kafka
+        if notification is not None:
+            data['notification_forwarding'] = {}
+
+            transport_url = notification.get('transport_url')
+            if transport_url is not None:
+                data['notification_forwarding'].update(
+                    transport_url=transport_url or None
+                )
+
+            kafka_security_protocol = notification.get('kafka_security_protocol')
+            if kafka_security_protocol is not None:
+                data['notification_forwarding'].update(
+                    kafka_security_protocol=kafka_security_protocol or None
+                )
+
+            kafka_sasl_mechanism = notification.get('kafka_sasl_mechanism')
+            if kafka_sasl_mechanism is not None:
+                data['notification_forwarding'].update(
+                    kafka_sasl_mechanism=kafka_sasl_mechanism
+                )
+
+            files = {'json': (None, json.dumps(data))}
+
+            kafka_ssl_ca_cert = notification.get('kafka_ssl_ca_cert')
+            if kafka_ssl_ca_cert is not None:
+                files['kafka_ssl_ca_cert'] = kafka_ssl_ca_cert
+
+            kafka_ssl_client_cert = notification.get('kafka_ssl_client_cert')
+            if kafka_ssl_client_cert is not None:
+                files['kafka_ssl_client_cert'] = kafka_ssl_client_cert
+
+        if kafka_ssl_ca_cert or kafka_ssl_client_cert:
+            return self.api.client.patch_async(self.base_url, files=files)
+
+        return self.api.client.patch_async(self.base_url, json=data)

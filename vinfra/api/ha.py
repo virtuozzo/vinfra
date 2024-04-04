@@ -2,12 +2,13 @@ import socket
 import sys
 
 from requests import adapters
+from requests import exceptions as r_exceptions
 from urllib3.connection import HTTPConnection
 
 from vinfra import api_versions
 from vinfra import exceptions
 from vinfra.api import base
-
+from vinfra.compat import PLATFORM_LINUX
 
 try:
     TCP_USER_TIMEOUT = socket.TCP_USER_TIMEOUT
@@ -36,18 +37,59 @@ class HaTask(base.BackendTask):
                                      connect_retry_delay=0.5)
 
     def wait(self, timeout=None):
-        if sys.platform != 'linux2':
+        if sys.platform != PLATFORM_LINUX:
             return super(HaTask, self).wait(timeout=timeout)
 
         # replace global adapter can have some affect to parallel runs
-        adaper_prefix = 'https://'
-        adapter = self.api.session.session.get_adapter(adaper_prefix)
+        adapter_prefix = 'https://'
+        adapter = self.api.session.session.get_adapter(adapter_prefix)
         try:
             self.api.session.session.close()
-            self.api.session.session.mount(adaper_prefix, LinuxHTTPAdapter())
+            self.api.session.session.mount(adapter_prefix, LinuxHTTPAdapter())
             return super(HaTask, self).wait(timeout=timeout)
         finally:
-            self.api.session.session.mount(adaper_prefix, adapter)
+            self.api.session.session.mount(adapter_prefix, adapter)
+
+
+class HaPrimarySwitcher(base.PollTask):
+    def __init__(self, resource, api, new_master):
+        self.resource = resource
+        self.api = api
+        self._new_master = new_master
+
+    def wait(self, timeout=None):
+        timeout = timeout or self.default_timeout
+        try:
+            resource = super(HaPrimarySwitcher, self).wait(timeout=timeout)
+        except exceptions.TimeoutError:
+            msg = (
+                "Failed to switch primary node to {}. Timeout of {} "
+                "seconds exceeded".format(self._new_master, timeout)
+            )
+            raise exceptions.TimeoutError(msg)
+        return resource
+
+    def poll(self):
+        try:
+            self.resource = self.api.client.get("ha/configs")
+        except r_exceptions.HTTPError as err:
+            if err.response.status_code != 502:
+                msg = (
+                    "Failed to get HA primary switch status (HTTP code: {}).".format(
+                        self.resource.status_code)
+                )
+                raise exceptions.VinfraError(msg)
+            return None
+        except (r_exceptions.ConnectionError, r_exceptions.ReadTimeout):
+            return None
+
+        primary = [x for x in self.resource['nodes'] if x['is_primary']][0]
+
+        if primary['id'] == self._new_master:
+            return self.resource
+
+    def get_info(self):
+        return self.resource
 
 
 class HaConfig(object):
@@ -63,8 +105,10 @@ class HaConfig(object):
         return ha_config
 
     def create_async(self, nodes, virtual_ips, force=None):
-        data = {'nodes': [base.get_id(node) for node in nodes]}
-        data['virtual_ips'] = []
+        data = {
+            'nodes': [base.get_id(node) for node in nodes],
+            'virtual_ips': []
+        }
 
         for network, ip_addr, addr_type in virtual_ips:
             vip = {
@@ -116,11 +160,22 @@ class HaConfig(object):
         data = self.api.client.patch("/ha/nodes/", json=data)
         return HaTask(self.api, data)
 
-    def remove_node_async(self, node, force=False):
-        node_id = base.get_id(node)
-        url = "{}/{}".format("/ha/nodes", node_id)
-        data = dict()
+    def remove_node_async(self, nodes, force=None):
+        data = {}
+        if nodes:
+            data['nodes'] = [base.get_id(node) for node in nodes]
+
         if force is not None:
             data['force'] = force
-        data = self.api.client.delete(url, json=data)
+        elif len(nodes) > 1:
+            raise exceptions.VinfraError(
+                "Multiple nodes can only be force removed by setting --force "
+                "option")
+
+        data = self.api.client.delete("/ha/nodes/", json=data)
         return HaTask(self.api, data)
+
+    def switch_master_async(self, node):
+        new_master = {'id': str(base.get_id(node))}
+        resource = self.api.client.post("/ha/switch-master", json=new_master)
+        return HaPrimarySwitcher(resource, self.api, new_master['id'])

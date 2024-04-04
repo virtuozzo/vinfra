@@ -1,4 +1,4 @@
-# pylint: disable=no-member
+# pylint: disable=no-member,unused-argument,no-self-use
 import marshmallow as ma
 
 from vinfra.api import base
@@ -62,12 +62,12 @@ class Row(Location):
 class Rack(Location):
     class Schema(Location.Schema):
         parent = ma.fields.Integer(required=True)
-        children = ma.fields.List(ma.fields.UUID(), dump_to='nodes', required=False, missing=[])
+        children = ma.fields.List(ma.fields.UUID(), required=False, missing=[])
 
-    @property
-    def nodes(self):
-        # noinspection PyUnresolvedReferences
-        return self.children
+        @ma.post_dump
+        def post_dump_nodes(self, data, many, **kwargs):
+            data['nodes'] = data.pop('children', [])
+            return data
 
     @classmethod
     def index(cls):

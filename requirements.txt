@@ -13,4 +13,5 @@ stevedore         # via cliff
 unicodecsv        # via cliff
 urllib3           # via vinfraclient
 marshmallow==2.21.0       # via vinfraclient
-netaddr           # via vinfraclient
+netaddr==0.10.1           # via vinfraclient
+pycryptodome      # via vinfraclient

@@ -19,15 +19,11 @@ def _valate_members_addresses(load_balancer, members):
         # no valid LB address? we will skip validation for that case
         LOG.warning('Invalid IP address for load balancer:: %s', err)
     else:
-        try:
-            for member in members:
-                if address_version != compat.get_ipaddress_version(
-                        member['address']):
-                    raise ValueError('IP address version mismatch')
-        except ValueError:
-            raise exceptions.ValidationError(
-                'Invalid IP address "{}", only IPv{} members are allowed'
-                ''.format(member['address'], address_version))
+        for member in members:
+            if address_version != compat.get_ipaddress_version(member['address']):
+                raise exceptions.ValidationError(
+                    'Invalid IP address "{}", only IPv{} members are allowed'
+                    ''.format(member['address'], address_version))
 
 
 def _parse_pools_config(config_path):
@@ -50,8 +46,8 @@ def _parse_pools_config(config_path):
 
 def _get_file_base64(file_path):
     try:
-        with open(file_path, 'r') as file_stream:
-            return base64.b64encode(file_stream.read())
+        with open(file_path, 'rb') as file_stream:
+            return base64.b64encode(file_stream.read()).decode()
     except Exception as err:
         raise argparse.ArgumentTypeError(
             "Failed to read the certificate file:\n{!s}".format(err)
@@ -103,35 +99,11 @@ def _common_pool_args(parser, required):
         help="Pool name",
     )
     parser.add_argument(
-        "--protocol",
-        required=required,
-        choices=["HTTP", "HTTPS", "TCP", "UDP"],
-        help="The protocol for incoming connections",
-    )
-    parser.add_argument(
-        "--port",
-        required=required,
-        type=int,
-        help="The port for incoming connections",
-    )
-    parser.add_argument(
         "--algorithm",
         dest='lb_algorithm',
         required=required,
         choices=["LEAST_CONNECTIONS", "ROUND_ROBIN", "SOURCE_IP"],
         help="Load balancing algorithm",
-    )
-    parser.add_argument(
-        "--backend-protocol",
-        required=required,
-        choices=["HTTP", "HTTPS", "TCP", "UDP"],
-        help="The protocol for destination connections",
-    )
-    parser.add_argument(
-        "--backend-port",
-        required=required,
-        type=int,
-        help="The port for destination connections",
     )
 
     parser.add_argument(
@@ -242,6 +214,38 @@ def _common_pool_args(parser, required):
         action='store_false',
         default=None,
         help="Disable the pool."
+    )
+
+    insert_headers_group = parser.add_mutually_exclusive_group()
+    insert_headers_group.add_argument(
+        "--insert-headers",
+        type=argtypes.parse_dict_options,
+        metavar='<header=value,...>',
+        help="A dictionary of optional headers to insert into the request "
+             "before it is sent to the backend member.",
+    )
+    insert_headers_group.add_argument(
+        "--no-headers",
+        dest='insert_headers',
+        action='store_const',
+        const={},
+        help="Remove optional headers from the request",
+    )
+
+    tls_enabled_group = parser.add_mutually_exclusive_group()
+    tls_enabled_group.add_argument(
+        '--enable-tls',
+        dest='tls_enabled',
+        action='store_true',
+        default=None,
+        help="Enable backend member re-encryption."
+    )
+    tls_enabled_group.add_argument(
+        '--disable-tls',
+        dest='tls_enabled',
+        action='store_false',
+        default=None,
+        help="Disable backend member re-encryption."
     )
 
 
@@ -414,10 +418,40 @@ class CreatePool(base.TaskCommand):
     def configure_parser(self, parser):
         _load_balancer_arg(parser)
         _common_pool_args(parser, True)
+        parser.add_argument(
+            "--enable-proxy",
+            dest='proxy_protocol_enabled',
+            action='store_true',
+            help="Enable the PROXY protocol",
+        )
+        parser.add_argument(
+            "--protocol",
+            required=True,
+            choices=["HTTP", "HTTPS", "TCP", "UDP"],
+            help="The protocol for incoming connections",
+        )
+        parser.add_argument(
+            "--port",
+            required=True,
+            type=int,
+            help="The port for incoming connections",
+        )
+        parser.add_argument(
+            "--backend-protocol",
+            required=True,
+            choices=["HTTP", "HTTPS", "TCP", "UDP"],
+            help="The protocol for destination connections",
+        )
+        parser.add_argument(
+            "--backend-port",
+            required=True,
+            type=int,
+            help="The port for destination connections",
+        )
 
     def do_action(self, parsed_args):
         if parsed_args.healthmonitor:
-            if not 'type' in parsed_args.healthmonitor:
+            if 'type' not in parsed_args.healthmonitor:
                 raise exceptions.ValidationError(
                     'Health monitor type is required.')
         load_balancer = find_resource(self.app.vinfra.compute.load_balancers,
@@ -427,15 +461,19 @@ class CreatePool(base.TaskCommand):
             _valate_members_addresses(load_balancer, parsed_args.members)
 
         return self.app.vinfra.compute.load_balancer_pools.create_async(
-            load_balancer, parsed_args.name, parsed_args.protocol,
+            load_balancer, parsed_args.protocol,
             parsed_args.port, parsed_args.lb_algorithm,
             parsed_args.backend_protocol, parsed_args.backend_port,
+            name=parsed_args.name,
             certificate=parsed_args.certificate,
             connection_limit=parsed_args.connection_limit,
             description=parsed_args.description, enabled=parsed_args.enabled,
             healthmonitor=parsed_args.healthmonitor,
             members=parsed_args.members, private_key=parsed_args.private_key,
             sticky_session=parsed_args.sticky_session,
+            insert_headers=parsed_args.insert_headers,
+            tls_enabled=parsed_args.tls_enabled,
+            proxy_protocol_enabled=parsed_args.proxy_protocol_enabled
         )
 
 
@@ -496,14 +534,13 @@ class SetPool(base.TaskCommand):
         return pool.update(
             certificate=parsed_args.certificate,
             connection_limit=parsed_args.connection_limit,
-            backend_protocol=parsed_args.backend_protocol,
-            backend_port=parsed_args.backend_port,
             description=parsed_args.description, enabled=parsed_args.enabled,
             healthmonitor=parsed_args.healthmonitor,
             lb_algorithm=parsed_args.lb_algorithm, members=parsed_args.members,
             name=parsed_args.name, private_key=parsed_args.private_key,
-            protocol=parsed_args.protocol, protocol_port=parsed_args.port,
             sticky_session=parsed_args.sticky_session,
+            insert_headers=parsed_args.insert_headers,
+            tls_enabled=parsed_args.tls_enabled
         )
 
 

@@ -395,7 +395,7 @@ class CreateK8saasCluster(base.TaskCommand):
         }
         if parsed_args.node_count is not None:
             worker_pool['node_count'] = parsed_args.node_count
-        if parsed_args.min_node_count:
+        if parsed_args.min_node_count is not None:
             worker_pool['min_node_count'] = parsed_args.min_node_count
         if parsed_args.max_node_count:
             worker_pool['max_node_count'] = parsed_args.max_node_count
@@ -531,7 +531,6 @@ class CreateK8saasWorkerGroup(base.TaskCommand):
             "--node-count",
             metavar="<count>",
             type=int,
-            default=1,
             help="The amount of worker nodes in the Kubernetes worker group"
         )
         parser.add_argument(
@@ -554,11 +553,16 @@ class CreateK8saasWorkerGroup(base.TaskCommand):
 
         flavor = find_resource(self.app.vinfra.compute.flavors,
                                parsed_args.flavor)
+        node_count = 1
+        if parsed_args.node_count is not None:
+            node_count = parsed_args.node_count
+        elif parsed_args.min_node_count is not None:
+            node_count = parsed_args.min_node_count
 
         kwargs = dict(
             flavor=flavor.name,
             name=parsed_args.name,
-            node_count=parsed_args.node_count,
+            node_count=node_count,
             min_node_count=parsed_args.min_node_count,
             max_node_count=parsed_args.max_node_count,
             labels=parsed_args.labels,

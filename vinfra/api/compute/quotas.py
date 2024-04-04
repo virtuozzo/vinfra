@@ -18,7 +18,7 @@ class QuotasManager(base.Manager):
     def update(self, project_id, compute_cores=None, compute_ram=None,
                network_floatingip=None, network_ipsec_site_connection=None,
                storage_policies=None, k8saas_cluster=None,
-               lbaas_loadbalancer=None, placement=None):
+               lbaas_loadbalancer=None, placement=None, volumes_backups=None):
         nested_dict = lambda: collections.defaultdict(nested_dict)
         payload = nested_dict()
 
@@ -41,5 +41,36 @@ class QuotasManager(base.Manager):
             payload['lbaas']['loadbalancer'] = {'limit': lbaas_loadbalancer}
         if placement is not None:
             payload['placement'] = placement
+        if volumes_backups is not None:
+            payload['storage']['volumes_backups']['limit'] = volumes_backups
+        return self._post("{}/{}".format(self.base_url, project_id),
+                          json=payload)
+
+
+class DomainQuotasManager(base.Manager):
+    base_url = "/compute/domain-quotas"
+
+    def show(self, project_id, usage=False):
+        url = "{}/{}".format(self.base_url, project_id)
+        if usage:
+            params = {'usage': usage}
+            url += "?params={}".format(json.dumps(params))
+
+        return self._get(url)
+
+    def update(self, project_id, compute_cores=None, compute_ram=None,
+               storage_policies=None, volumes_backups=None):
+        nested_dict = lambda: collections.defaultdict(nested_dict)
+        payload = nested_dict()
+
+        if compute_cores is not None:
+            payload['compute']['cores']['limit'] = compute_cores
+        if compute_ram is not None:
+            payload['compute']['ram']['limit'] = compute_ram
+        if storage_policies:
+            for spolicy, limit in storage_policies:
+                payload['storage']['storage_policies'][spolicy]['limit'] = limit
+        if volumes_backups:
+            payload['storage']['volumes_backups']['limit'] = volumes_backups
         return self._post("{}/{}".format(self.base_url, project_id),
                           json=payload)

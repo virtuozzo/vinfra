@@ -59,18 +59,21 @@ class FilterAction(argparse.Action):
         help_message = kwargs.get('help', '').strip()
         if help_message:
             if not help_message.endswith('.'):
-                help_message += '. '
-            if not help_message.endswith(' '):
-                help_message += ' '
+                help_message += '.'
+            help_message += ' '
+
+        tail = None
         if len(self._operators) > 1:
-            help_message += ('Supported filter operators: {}'
-                             .format(', '.join(self._operators)))
+            ops = ', '.join(self._operators)
+            tail = ('Supported filter operators: %s. The filter format is '
+                    '<operator>:<value1>[,<value2>,...].' % ops)
         else:
-            help_message += ('Supported filter operator: {}'
-                             .format(', '.join(self._operators)))
-        help_message += ('. The filter format is '
-                         '<operator>:<value1>[,<value2>,...].')
-        self.help = help_message
+            op = self._operators[0]
+            if op == 'contains':
+                tail = 'The filter format is %s:<value>.' % op
+            else:
+                tail = 'The filter format is %s:<value1>[,<value2>,...].' % op
+        self.help = help_message + tail if help_message else tail
 
     def __call__(self, parser, namespace, values, option_string=None):
         setattr(namespace, self.dest, values)
@@ -153,6 +156,18 @@ class Command(cliff_command.Command):
             self._produce_error("command error: %s" % err)
             return COMMAND_ERROR
 
+        elif isinstance(err, request_exceptions.ConnectionError):
+            self._produce_error("connection error: %s" % err)
+            return CONNECTION_ERROR
+
+        elif isinstance(err, vinfra_exceptions.TimeoutError):
+            self._produce_error("command is timed out: %s" % err)
+            return TIMEOUT_ERROR
+
+        elif isinstance(err, request_exceptions.Timeout):
+            self._produce_error("timeout error: %s" % err)
+            return TIMEOUT_ERROR
+
         elif isinstance(err, (exceptions.VinfraError,
                               vinfra_exceptions.VinfraError,
                               UnicodeEncodeError,
@@ -163,18 +178,6 @@ class Command(cliff_command.Command):
                 message = '{} (Request-ID: {})'.format(message, request_id)
             self._produce_error(message)
             return COMMAND_ERROR
-
-        elif isinstance(err, request_exceptions.ConnectionError):
-            self._produce_error("connection error: %s" % err)
-            return CONNECTION_ERROR
-
-        elif isinstance(err, vinfra_exceptions.TimeoutError):
-            self._produce_error("command timeouted: %s" % err)
-            return TIMEOUT_ERROR
-
-        elif isinstance(err, request_exceptions.Timeout):
-            self._produce_error("timeout error: %s" % err)
-            return TIMEOUT_ERROR
 
         return None
 
@@ -284,7 +287,7 @@ class DisplayMixin(object):
             return {}
 
         if not isinstance(data, dict):
-            data = data.to_dict()
+            data = data.to_dict() or {}
             for key in data.keys():
                 if key.endswith("_manager"):
                     del data[key]

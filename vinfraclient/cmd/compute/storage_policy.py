@@ -54,26 +54,31 @@ def storage_policy_options(
         parser, required=False, use_defaults=False,
         encoding=True, replicas=True,
         failure_domain=True, qos=False,
-        storage=False, params=False, prefix=''):
+        storage=False, params=False, prefix='', dist_prefix=''):
     if required or use_defaults:
         # use_defaults and required are mutually exclusive
         assert required != use_defaults
 
+    if prefix == 'metadata-':
+        help_msg = 'Metadata tier'
+    else:
+        help_msg = 'Storage tier'
+
     parser.add_argument(
         "--{}tier".format(prefix),
         choices=['0', '1', '2', '3'],
-        dest="tier",
+        dest="{}tier".format(dist_prefix),
         default=0 if use_defaults else None,
         required=required,
-        help="Storage tier"
-             "{}".format(" (default: %(default)s)" if use_defaults else "")
+        help=help_msg + "{}".format(" (default: %(default)s)" if use_defaults else "")
     )
-    redundancy_group = parser.add_mutually_exclusive_group(required=required)
+    if replicas or encoding:
+        redundancy_group = parser.add_mutually_exclusive_group(required=required)
     if replicas:
         redundancy_group.add_argument(
             "--{}replicas".format(prefix),
             metavar="<norm>",
-            dest="redundancy",
+            dest="{}redundancy".format(dist_prefix),
             type=parse_replicas,
             default='1' if use_defaults else None,
             help="Storage replication mapping in the format:\n"
@@ -84,7 +89,7 @@ def storage_policy_options(
         redundancy_group.add_argument(
             "--{}encoding".format(prefix),
             metavar="<M>+<N>",
-            dest="redundancy",
+            dest="{}redundancy".format(dist_prefix),
             type=parse_encoding,
             default='1+0' if use_defaults else None,
             help="Storage erasure encoding mapping in the format:\n"
@@ -96,7 +101,7 @@ def storage_policy_options(
         parser.add_argument(
             "--{}failure-domain".format(prefix),
             choices=failure_domain_types,
-            dest="failure_domain",
+            dest="{}failure_domain".format(dist_prefix),
             required=required,
             default=failure_domain_types[0] if use_defaults else None,
             help="Storage failure domain"

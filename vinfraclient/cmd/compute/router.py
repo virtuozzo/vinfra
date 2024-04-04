@@ -130,7 +130,7 @@ class ListRouters(base.Lister):
             '--id',
             metavar='<id>',
             action='filter',
-            operators='in',
+            operators=('in', 'contains'),
             help='Show a router with the specified ID or list routers using '
                  'a filter.'
         )
@@ -354,7 +354,7 @@ class RouterInterfaceList(base.Lister):
         ifaces = router.interfaces.list()
 
         # Note(akurbatov): extend the output with network name to make it a
-        # little bit user friendly
+        # little-bit user-friendly
         with_name = parsed_args.formatter == 'table'
         if with_name:
             networks = self.app.vinfra.compute.networks.list()

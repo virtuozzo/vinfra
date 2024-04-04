@@ -50,12 +50,6 @@ class FenceNode(Command):
 
     def configure_parser(self, parser):
         parser.add_argument(
-            "--force-down",
-            action="store_true",
-            default=True,
-            help="Forcefully mark the node as down.",
-        )
-        parser.add_argument(
             "--reason",
             metavar="<reason>",
             help="The reason for disabling the compute node"
@@ -64,8 +58,7 @@ class FenceNode(Command):
 
     def do_action(self, parsed_args):
         node = find_resource(self.app.vinfra.compute.nodes, parsed_args.node)
-        return node.fence(force_down=parsed_args.force_down,
-                          reason=parsed_args.reason)
+        return node.fence(reason=parsed_args.reason)
 
 
 class UnfenceNode(Command):

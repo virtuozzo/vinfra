@@ -1,15 +1,22 @@
 import argparse
+import collections
+import logging
 import os
+import sys
 import yaml
 
-from vinfraclient.argtypes import parse_dict_options
+from vinfraclient.argtypes import parse_dict_options_with_commas, parse_pair_option
 from vinfraclient.argtypes import parse_pair_options, parse_list_options
 from vinfraclient.cmd.base import Lister, ShowOne, TaskCommand
 from vinfraclient.cmd.compute.storage_policy import storage_policy_options
-from vinfraclient.exceptions import ValidationError
+from vinfraclient.exceptions import ValidationError, VinfraError
 from vinfraclient.utils import (
-    find_resource, find_resources, join_options
+    ask_confirm, find_resource, find_resources, join_options
 )
+
+
+LOG = logging.getLogger(__name__)
+BACKUP_DRIVERS = ['posix', 'nfs', 's3']
 
 
 def get_subnet_from_pairs(pairs):
@@ -54,6 +61,14 @@ _CUSTOM_PARAM_SHORTCUTS = {
                                           'nova.conf',
                                           'DEFAULT',
                                           'ram_allocation_ratio'),
+    'nova_compute_live_migration_permit_post_copy': ('nova-compute',
+                                                     'nova.conf',
+                                                     'libvirt',
+                                                     'live_migration_permit_post_copy'),
+    'nova_compute_live_migration_post_copy_always': ('nova-compute',
+                                                     'nova.conf',
+                                                     'libvirt',
+                                                     'live_migration_post_copy_always'),
     'neutron_openvswitch_vxlan_port': ('neutron-openvswitch-agent',
                                        'ml2_conf.ini',
                                        'agent',
@@ -96,6 +111,16 @@ def _add_custom_param_args(parser):
         )
 
 
+def get_enabled_features(parsed_args):
+    features = {
+        'k8saas': parsed_args.enable_k8saas,
+        'lbaas': parsed_args.enable_lbaas,
+        'metering': parsed_args.enable_metering,
+        'backup': parsed_args.enable_backup,
+    }
+    return [k for k, v in features.items() if v]
+
+
 def yaml_config_file(path):
     if not os.path.exists(path):
         raise argparse.ArgumentTypeError('%s does not exist' % path)
@@ -127,8 +152,8 @@ def _add_common_options(parser):
         type=lambda x: x.split(','),
         help="A comma-separated list of CPU features to enable or disable for virtual machines.\n"
              "For example, 'ssbd,+vmx,-mpx' will enable ssbd and vmx and disable mpx.\n"
-             "Note that if the first feature starts with a dash, the following syntax is used:"
-             " --cpu-features='-vmx'."
+             "Note that if the first feature starts with a dash, "
+             "the following syntax is used: --cpu-features='-vmx'."
     )
     parser.add_argument(
         "--enable-k8saas",
@@ -149,18 +174,22 @@ def _add_common_options(parser):
         help="Enable metering services."
     )
     parser.add_argument(
+        "--enable-backup",
+        action="store_true",
+        default=None,
+        help="Enable volume backup services."
+    )
+    parser.add_argument(
         "--notification-forwarding",
         metavar="<transport-url>",
         dest="notification_forwarding",
         default=None,
         help="Enable notification forwarding through the specified transport URL.\n"
              "Transport URL format:\n"
-             "driver://[user:pass@]host:port[,[userN:passN@]hostN:portN]?query\n"
+             "driver://[user:pass@]host:port[,[userN:passN@]hostN:portN]\n"
              "Supported drivers: ampq, kafka, rabbit.\n"
-             "Query params: topic - topic name, driver - messaging driver, "
-             "possible values are "
-             "messaging, messagingv2, routing, log, test, noop.\n"
-             "Example: kafka://10.10.10.10:9092?topic=notifications"
+             "Note: Messages will be published to \"notifications\" topic\n"
+             "Example: kafka://10.10.10.10:9092"
     )
     parser.add_argument(
         "--disable-notification-forwarding",
@@ -182,7 +211,7 @@ def _add_common_options(parser):
         dest="pci_passthrough",
         type=yaml_config_file,
         default=None,
-        help="Path to the PCI passthrough configuration file."
+        help="Path to the PCI passthrough YAML configuration file."
     )
     parser.add_argument(
         "--scheduler-config",
@@ -190,7 +219,13 @@ def _add_common_options(parser):
         dest="scheduler",
         type=yaml_config_file,
         default=None,
-        help="Path to the scheduler configuration file."
+        help="Path to the scheduler YAML configuration file.\n"
+             "The file should set weight multipliers of enabled\n"
+             "weighers, to define the weigher priority compared to\n"
+             "other weighers. Valid values are float.\n"
+             "Example of file contents:\n"
+             "cpu_weight_multiplier: 1.0\n"
+             "ram_weight_multiplier: 4.0"
     )
     _add_custom_param_args(parser)
 
@@ -320,16 +355,14 @@ class CreateCompute(TaskCommand):
         return self.app.vinfra.compute.cluster.create_async(
             nodes, cpu_model=parsed_args.cpu_model,
             external_network=external_network, force=parsed_args.force,
-            enable_k8saas=parsed_args.enable_k8saas,
-            enable_lbaas=parsed_args.enable_lbaas,
-            enable_metering=parsed_args.enable_metering,
+            enable_features=get_enabled_features(parsed_args),
             notification_forwarding=parsed_args.notification_forwarding,
             custom_params=_custom_params_from(parsed_args),
             external_address=parsed_args.endpoint_hostname,
             pci_passthrough=parsed_args.pci_passthrough,
             default_storage_policy=default_storage_policy,
             scheduler=scheduler,
-            cpu_features=parsed_args.cpu_features
+            cpu_features=parsed_args.cpu_features,
         )
 
 
@@ -474,6 +507,12 @@ class SetCompute(TaskCommand):
     _description = "Change compute cluster parameters"
 
     def configure_parser(self, parser):
+        parser.add_argument(
+            "--nodes",
+            metavar="<nodes>",
+            type=parse_list_options,
+            help="A comma-separated list of node IDs or hostnames."
+        )
         _add_common_options(parser)
 
     def do_action(self, parsed_args):
@@ -485,11 +524,14 @@ class SetCompute(TaskCommand):
             else:
                 scheduler = {'ram_weight_multiplier': ram_weight_multiplier}
 
+        if parsed_args.nodes:
+            nodes = [find_resource(self.app.vinfra.nodes, node)
+                     for node in parsed_args.nodes]
+
         return self.app.vinfra.compute.cluster.reconfigure_async(
+            nodes=nodes if parsed_args.nodes else None,
             cpu_model=parsed_args.cpu_model,
-            enable_k8saas=parsed_args.enable_k8saas,
-            enable_lbaas=parsed_args.enable_lbaas,
-            enable_metering=parsed_args.enable_metering,
+            enable_features=get_enabled_features(parsed_args),
             notification_forwarding=parsed_args.notification_forwarding,
             custom_params=_custom_params_from(parsed_args),
             external_address=parsed_args.endpoint_hostname,
@@ -510,23 +552,52 @@ def _add_storage_common_options(parser):
         "--params",
         metavar="<param=value>[,<param2=value2>] [--params <param3=value3>] ...",
         action='append',
-        type=parse_dict_options,
-        default=[{}],
+        type=parse_dict_options_with_commas,
+        default=[],
         help=(
-            r"--params \<param=value\>[,\<param2=value2\>] [--params \<param3=value3\>] ...\n"
-            "A comma-separated list of parameters in the format `key=value`."
-            " This option can be used multiple times."
+            "--params <param=value>[,<param2=value2>] "
+            "[--params <param3=value3>] ...\n"
+            "A comma-separated list of parameters in the format `key=value`. "
+            "This option can be used multiple times. "
         )
     )
     parser.add_argument(
         "--secret-params",
         metavar="<param=value>[,<param2=value2>] [--secret-params <param3=value3>] ...",
         action='append',
-        type=parse_dict_options,
+        type=parse_dict_options_with_commas,
+        default=[],
         help=(
-            r"--secret-params \<param=value\>[,\<param2=value2\>] [--params \<param3=value3\>] ..."
-            "A comma-separated list of secret parameters in the format"
-            " `key=value`. This option can be used multiple times."
+            "--secret-params <param=value>[,<param2=value2>] "
+            "[--secret-params <param3=value3>] ...\n"
+            "A comma-separated list of secret parameters in the format `key=value`. "
+            "This option can be used multiple times. "
+        )
+    )
+    parser.add_argument(
+        "--param",
+        metavar="<param=value>",
+        action='append',
+        type=parse_pair_option,
+        default=[],
+        help=(
+            "--param <param=value>\n"
+            "Single parameter in the format `key=value`. "
+            "The parameter value can contain the comma symbol. "
+            "This option can be used multiple times. "
+        )
+    )
+    parser.add_argument(
+        "--secret-param",
+        metavar="<param=value>",
+        action='append',
+        type=parse_pair_option,
+        default=[],
+        help=(
+            "--secret-param <param=value>\n"
+            "Single secret parameter in the format `key=value`. "
+            "The parameter value can contain the comma symbol. "
+            "This option can be used multiple times. "
         )
     )
     parser.add_argument(
@@ -605,21 +676,39 @@ def _set_default_params(parsed_args):
     return params
 
 
+def _confirm_lookupcache_policy_all(parsed_args):
+    if 'lookupcache=all' in parsed_args.nfs_mount_options:
+        message = (
+            'Setting the lookupcache policy to all is not recommended '
+            'as it leads to issues with accessing volume .info files. '
+            'Do you still wish to proceed? [y/N]')
+        if not parsed_args.yes and not ask_confirm(message):
+            LOG.info('Operation not confirmed')
+            sys.exit(0)
+
+
 class AddComputeStorage(TaskCommand):
     _description = "Add a compute storage."
 
     def configure_parser(self, parser):
         _add_storage_common_options(parser)
+        parser.add_argument(
+            '-y', '--yes',
+            action='store_true',
+            help='Skip yes/no prompt (assume yes)'
+        )
 
     def do_action(self, parsed_args):
         if parsed_args.storage_type:
             parsed_args.params[0] = _set_default_params(parsed_args)
         if parsed_args.nfs_mount_options:
+            _confirm_lookupcache_policy_all(parsed_args)
             parsed_args.params[0]['nfs_mount_options'] = parsed_args.nfs_mount_options
         return self.app.vinfra.compute.storages.create_async(
             name=parsed_args.name,
-            params=join_options(parsed_args.params),
-            secret_params=join_options(parsed_args.secret_params),
+            params=join_options(parsed_args.params + [dict(parsed_args.param)]),
+            secret_params=join_options(
+                parsed_args.secret_params + [dict(parsed_args.secret_param)]),
             enabled=parsed_args.enabled,
         )
 
@@ -641,15 +730,25 @@ class SetComputeStorage(TaskCommand):
             type=parse_list_options,
             help="A comma-separated list of secret parameters to unset"
         )
+        parser.add_argument(
+            '-y', '--yes',
+            action='store_true',
+            help='Skip yes/no prompt (assume yes)'
+        )
 
     def do_action(self, parsed_args):
         compute_storage = find_resource(self.app.vinfra.compute.storages,
                                         parsed_args.name)
         if parsed_args.nfs_mount_options:
+            _confirm_lookupcache_policy_all(parsed_args)
             parsed_args.params[0]['nfs_mount_options'] = parsed_args.nfs_mount_options
         return compute_storage.update_async(
-            params=join_options(parsed_args.params, parsed_args.unset_params),
-            secret_params=join_options(parsed_args.secret_params, parsed_args.unset_secret_params),
+            params=join_options(
+                parsed_args.params + [dict(parsed_args.param)],
+                parsed_args.unset_params),
+            secret_params=join_options(
+                parsed_args.secret_params + [dict(parsed_args.secret_param)],
+                parsed_args.unset_secret_params),
             enabled=parsed_args.enabled,
         )
 
@@ -692,6 +791,7 @@ class RemoveComputeStorage(TaskCommand):
                                         parsed_args.name)
         return compute_storage.delete_async()
 
+
 class ShowTask(ShowOne):
     _description = "Show compute task details."
 
@@ -703,6 +803,7 @@ class ShowTask(ShowOne):
 
     def do_action(self, parsed_args):
         return self.app.vinfra.compute.cluster.show_task(parsed_args.task_id)
+
 
 class RetryTask(ShowOne):
     _description = "Retry a failed compute task."
@@ -716,6 +817,7 @@ class RetryTask(ShowOne):
     def do_action(self, parsed_args):
         return self.app.vinfra.compute.cluster.retry_task(parsed_args.task_id)
 
+
 class AbortTask(ShowOne):
     _description = "Abort a failed compute task."
 
@@ -727,3 +829,282 @@ class AbortTask(ShowOne):
 
     def do_action(self, parsed_args):
         return self.app.vinfra.compute.cluster.abort_task(parsed_args.task_id)
+
+
+class SetNotification(TaskCommand):
+    _description = "Configure compute notification forwarding options"
+
+    @staticmethod
+    def validate_cert_file(file_name):
+        if not os.path.exists(file_name):
+            raise argparse.ArgumentTypeError('%s does not exist' % file_name)
+
+        try:
+            return open(file_name, mode='rb')
+        except Exception as err:
+            raise ValidationError(
+                'Failed to open "{}" ({}).'.format(file_name, err))
+
+    @staticmethod
+    def _validate_kafka_param(param):
+        if ((param.kafka_ssl_client_cert or
+             param.kafka_ssl_ca_cert or
+             param.kafka_sasl_mechanism) and
+                not param.kafka_security_protocol):
+            raise ValidationError(
+                "--kafka-security-protocol is required if other Kafka options are specified"
+            )
+
+        if (param.kafka_security_protocol in ['SASL_PLAINTEXT', 'SASL_SSL'] and
+                param.kafka_sasl_mechanism is None):
+            raise ValidationError(
+                "-kafka-sasl-mechanism is required if --kafka-security-protocol "
+                "is set to SASL"
+            )
+
+        if (param.kafka_security_protocol in ['SSL', 'SASL_SSL'] and
+                param.kafka_ssl_ca_cert is None):
+            raise ValidationError(
+                "--kafka-ssl-ca-cert is required if --kafka-security-protocol "
+                "is set to SSL"
+            )
+
+    def _parse_notification_params(self, parsed_args):
+        if (not parsed_args.transport_url and
+                not parsed_args.kafka_security_protocol):
+            raise ValidationError(
+                "--transport_url or --kafka_security_protocol option is required"
+            )
+        self._validate_kafka_param(parsed_args)
+
+        notification_param = dict(
+            transport_url=parsed_args.transport_url,
+            kafka_security_protocol=parsed_args.kafka_security_protocol,
+        )
+
+        if parsed_args.kafka_security_protocol in ['SASL_PLAINTEXT', 'SASL_SSL']:
+            notification_param.update(
+                kafka_sasl_mechanism=parsed_args.kafka_sasl_mechanism,
+            )
+
+        if parsed_args.kafka_security_protocol in ['SSL', 'SASL_SSL']:
+            notification_param.update(
+                kafka_ssl_ca_cert=parsed_args.kafka_ssl_ca_cert,
+                kafka_ssl_client_cert=parsed_args.kafka_ssl_client_cert
+            )
+
+        return notification_param
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            "--transport-url",
+            metavar="<transport-url>",
+            default=None,
+            help="Enable notification forwarding through the specified transport URL.\n"
+                 "Transport URL format:\n"
+                 "driver://[user:pass@]host:port[,[userN:passN@]hostN:portN]\n"
+                 "Supported drivers: ampq, kafka, rabbit.\n"
+                 "Note: Messages will be published to \"notifications\" topic\n"
+                 "Example: kafka://10.10.10.10:9092"
+        )
+        parser.add_argument(
+            "--kafka-security-protocol",
+            choices=['PLAINTEXT', 'SASL_PLAINTEXT', 'SSL', 'SASL_SSL'],
+            default=None,
+            help="Protocol used to communicate with brokers")
+        parser.add_argument(
+            "--kafka-sasl-mechanism",
+            choices=["SCRAM-SHA-256", "SCRAM-SHA-512"],
+            default=None,
+            help="Authentication mechanism to use for the SASL protocol")
+        parser.add_argument(
+            "--kafka-ssl-ca-cert",
+            metavar="<path>",
+            default=None,
+            type=self.validate_cert_file,
+            help="Path to a PEM file with the CA certificate that is used to verify the server"
+        )
+        parser.add_argument(
+            "--kafka-ssl-client-cert",
+            metavar="<path>",
+            default=None,
+            type=self.validate_cert_file,
+            help="Path to a PEM file with the SSL client certificate that is used for "
+                 "client authentication"
+        )
+
+    def do_action(self, parsed_args):
+        return self.app.vinfra.compute.cluster.reconfigure_notification(
+            notification=self._parse_notification_params(parsed_args)
+        )
+
+
+class DisableNotification(TaskCommand):
+    _description = "Disable notification forwarding options"
+
+    def configure_parser(self, parser):
+        options = parser.add_mutually_exclusive_group()
+        options.add_argument(
+            "--notification-forwarding",
+            action="store_false",
+            default=None,
+            help="Disable notification forwarding")
+        options.add_argument(
+            "--kafka-encryption",
+            action="store_true",
+            default=None,
+            help="Disable encryption of kafka messaging. The Kafka security protocol will be "
+                 "set to the default value 'PLAINTEXT'. "
+        )
+
+    def do_action(self, parsed_args):
+        if (parsed_args.notification_forwarding is None and
+                parsed_args.kafka_encryption is None):
+            raise ValidationError(
+                "--notification-forwarding or --kafka-encryption option is required"
+            )
+        if parsed_args.notification_forwarding is not None:
+            notification_param = dict(
+                transport_url=parsed_args.notification_forwarding
+            )
+        if parsed_args.kafka_encryption:
+            notification_param = dict(
+                kafka_security_protocol="PLAINTEXT"
+            )
+        return self.app.vinfra.compute.cluster.reconfigure_notification(notification_param)
+
+
+class ShowNotification(ShowOne):
+    _description = "Display notification forwarding options"
+
+    def do_action(self, parsed_args):
+        compute = self.app.vinfra.compute.cluster.get()
+        if compute is None:
+            raise VinfraError("Compute cluster is not available")
+
+        notification = compute['options'].get('notification_forwarding')
+        if notification is None or notification == 'disabled':
+            raise VinfraError("Notification forwarding is disabled")
+        return notification
+
+
+class ConfigureBackup(TaskCommand):
+    _description = 'Configure compute backup service'
+
+    def configure_parser(self, parser):
+        parser.add_argument(
+            '--enable',
+            action='store_true',
+            default=False,
+            help='Enable compute backup service'
+        )
+        parser.add_argument(
+            '--driver',
+            choices=BACKUP_DRIVERS,
+            required=True,
+            help="Backup driver to use. Possible values are: %s" % ", ".join(BACKUP_DRIVERS)
+        )
+        parser.add_argument(
+            '--posix-path',
+            metavar='<path>',
+            help='Absolute path for storing backups'
+        )
+        parser.add_argument(
+            '--nfs-share',
+            metavar='<host>:<share>',
+            help='NFS share in the format <host>:<share>;\n'
+                 '<host>: Node IP address or hostname;\n'
+                 '<share>: NFS share name.'
+        )
+        parser.add_argument(
+            '--nfs-mount-options',
+            metavar='<options>',
+            help='Comma-separated list of standard NFS mount options'
+        )
+        parser.add_argument(
+            '--s3-endpoint-url',
+            metavar='<url>',
+            help='S3 endpoint URL'
+        )
+        parser.add_argument(
+            '--s3-store-access-key',
+            metavar='<access-key>',
+            help='S3 store access key'
+        )
+        parser.add_argument(
+            '--s3-store-secret-key',
+            metavar='<secret-key>',
+            help='S3 store secret key'
+        )
+        parser.add_argument(
+            '--s3-store-bucket',
+            metavar='<bucket>',
+            help='S3 bucket to store backups in'
+        )
+        parser.add_argument(
+            '--s3-verify-ssl',
+            action='store_true',
+            help='Verify the SSL certificate for the S3 endpoint'
+        )
+        parser.add_argument(
+            '--s3-no-verify-ssl',
+            action='store_false',
+            dest='s3_verify_ssl',
+            help='Don\'t verify the SSL certificate for the S3 endpoint'
+        )
+        parser.add_argument(
+            '--concurrent-jobs',
+            metavar='<int>',
+            type=int,
+            help='Maximum number of concurrent jobs per scheduler'
+        )
+        parser.add_argument(
+            '--volume-batch-size',
+            metavar='<int>',
+            type=int,
+            help='Maximum number of volume backups per job'
+        )
+
+    def do_action(self, parsed_args):
+        options = (
+            'driver',
+            'posix_path',
+            'nfs_share',
+            'nfs_mount_options',
+            's3_endpoint_url',
+            's3_store_access_key',
+            's3_store_secret_key',
+            's3_store_bucket',
+            's3_verify_ssl',
+            'concurrent_jobs',
+            'volume_batch_size',
+        )
+        params = collections.defaultdict(dict)
+
+        if parsed_args.enable:
+            params['enable_features'] = ['backup']
+
+        for opt in options:
+            val = getattr(parsed_args, opt)
+            if val is not None:
+                params['backup'][opt] = val
+
+        if not params:
+            return
+
+        return self.app.vinfra.compute.cluster.reconfigure_async(**params)
+
+
+class ShowBackup(ShowOne):
+    _description = 'Show backup service options'
+
+    def do_action(self, parsed_args):
+        compute = self.app.vinfra.compute.cluster.get()
+        if not compute:
+            raise VinfraError('Compute cluster is not deployed')
+
+        backup = compute['options']['backup']
+        if not backup:
+            raise VinfraError('Backup service is not enabled')
+
+        return backup

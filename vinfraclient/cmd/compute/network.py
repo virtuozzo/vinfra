@@ -25,7 +25,7 @@ def log_subnet_deprecation_message(parsed_args):
     subnet_deprecated_fields = (
         set(columns) & set(vinfra_networks.SUBNET_DEPRECATED_FIELDS))
     if subnet_deprecated_fields:
-        LOG.info('Next columns are deprected: %s. Use subnets[] fields.',
+        LOG.info('Next columns are deprecated: %s. Use subnets[] fields.',
                  ', '.join(subnet_deprecated_fields))
 
 
@@ -224,7 +224,7 @@ class ListNetwork(base.Lister):
             '--id',
             metavar='<id>',
             action='filter',
-            operators='in',
+            operators=('in', 'contains'),
             help='Show a network with the specified ID or list networks using '
                  'a filter.'
         )

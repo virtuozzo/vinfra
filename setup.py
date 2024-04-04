@@ -1,4 +1,4 @@
-import subprocess
+import subprocess  # nosec
 import sys
 
 import os
@@ -24,7 +24,7 @@ def install_requires(rfile):
         return []
     pkgs = open(rfile).read().strip().splitlines()
     # NOTE(akurbatov): intentionally remove 'pycrypto' from requirements
-    # because can't be installed on win32 without aditional C headers.
+    # because can't be installed on win32 without additional C headers.
     if sys.platform == 'win32':
         pkgs = [pkg for pkg in pkgs if not pkg.startswith('cryptography')]
     return pkgs
@@ -46,7 +46,7 @@ def get_version():
         out, err = p.communicate()
         ret = p.wait()
         if not ret:
-            if isinstance(out, bytes):
+            if sys.version_info[0] == 3:
                 out = out.decode()
             return '{}+git.{}'.format(version, out.strip())
         elif ret == 127:  # no git tool
@@ -143,6 +143,9 @@ vinfra_cli_cmds = [
     'cluster_settings_locale_list = vinfraclient.cmd.settings:ListLocale',
     'cluster_settings_locale_show = vinfraclient.cmd.settings:ShowLocale',
     'cluster_settings_locale_set = vinfraclient.cmd.settings:UpdateLocale',
+    'cluster_settings_email-notifications_set = vinfraclient.cmd.settings:SetEmailNotifications',
+    'cluster_settings_email-notifications_show = vinfraclient.cmd.settings:ShowEmailNotificationsSettings',
+    'cluster_settings_email-notifications_disable = vinfraclient.cmd.settings:DisableEmailNotifications',
     'cluster_settings_ssl_show = vinfraclient.cmd.ssl:ShowSsl',
     'cluster_settings_ssl_set = vinfraclient.cmd.ssl:SetSsl',
     'cluster_settings_automatic-disk-replacement_show = vinfraclient.cmd.cs.automatic_disk_replacement:ShowSettings',
@@ -175,7 +178,7 @@ vinfra_cli_cmds = [
     'cluster_network_reconfiguration_show = vinfraclient.cmd.network:NetworkReconfigurationDetails',
     # cluster users
     'cluster_user_create = vinfraclient.cmd.user:CreateUser',
-    'cluster_user_change-password = vinfraclient.cmd.user:ChangePasword',
+    'cluster_user_change-password = vinfraclient.cmd.user:ChangePassword',
     'cluster_user_delete = vinfraclient.cmd.user:DeleteUser',
     'cluster_user_list = vinfraclient.cmd.user:ListUser',
     'cluster_user_list-available-roles = vinfraclient.cmd.user:ListRoles',
@@ -286,6 +289,15 @@ vinfra_cli_cmds = [
     'service_compute_task_show = vinfraclient.cmd.compute.cluster:ShowTask',
     'service_compute_task_retry = vinfraclient.cmd.compute.cluster:RetryTask',
     'service_compute_task_abort = vinfraclient.cmd.compute.cluster:AbortTask',
+    # compute backup plan
+    'service_compute_backup-plan_create = vinfraclient.cmd.compute.backup_plan:CreateBackupPlan',
+    'service_compute_backup-plan_delete = vinfraclient.cmd.compute.backup_plan:DeleteBackupPlan',
+    'service_compute_backup-plan_list = vinfraclient.cmd.compute.backup_plan:ListBackupPlans',
+    'service_compute_backup-plan_set = vinfraclient.cmd.compute.backup_plan:SetBackupPlan',
+    'service_compute_backup-plan_show = vinfraclient.cmd.compute.backup_plan:ShowBackupPlan',
+    'service_compute_backup-plan_volume_list = vinfraclient.cmd.compute.backup_plan:ListBackupPlanVolumes',
+    'service_compute_backup-plan_volume_add = vinfraclient.cmd.compute.backup_plan:AddBackupPlanVolumes',
+    'service_compute_backup-plan_volume_remove = vinfraclient.cmd.compute.backup_plan:RemoveBackupPlanVolumes',
     # compute cluster (deprecated):
     'service_compute_cluster_create = vinfraclient.cmd.deprecated:CreateCompute',
     'service_compute_cluster_delete = vinfraclient.cmd.deprecated:DeleteCompute',
@@ -415,6 +427,12 @@ vinfra_cli_cmds = [
     'service_compute_volume_snapshot_upload-to-image = vinfraclient.cmd.compute.volume_snapshot:UploadToImage',
     'service_compute_volume_snapshot_reset-state = vinfraclient.cmd.compute.volume_snapshot:ResetVolumeSnapshotState',
     'service_compute_volume_snapshot_revert = vinfraclient.cmd.compute.volume_snapshot:RevertToSnapshot',
+    # compute volume backup
+    'service_compute_volume_backup_create = vinfraclient.cmd.compute.volume_backup:CreateVolumeBackup',
+    'service_compute_volume_backup_delete = vinfraclient.cmd.compute.volume_backup:DeleteVolumeBackup',
+    'service_compute_volume_backup_list = vinfraclient.cmd.compute.volume_backup:ListVolumeBackups',
+    'service_compute_volume_backup_show = vinfraclient.cmd.compute.volume_backup:ShowVolumeBackup',
+    'service_compute_volume_backup_restore = vinfraclient.cmd.compute.volume_backup:RestoreVolumeBackup',
     # compute router iface
     'service_compute_router_iface_add = vinfraclient.cmd.compute.router:RouterInterfaceAdd',
     'service_compute_router_iface_remove = vinfraclient.cmd.compute.router:RouterInterfaceRemove',
@@ -422,6 +440,9 @@ vinfra_cli_cmds = [
     # compute quotas
     'service_compute_quotas_show = vinfraclient.cmd.compute.quotas:ShowComputeQuotas',
     'service_compute_quotas_update = vinfraclient.cmd.compute.quotas:UpdateComputeQuotas',
+    # compute domain-quotas
+    'service_compute_domain-quotas_show = vinfraclient.cmd.compute.domain_quotas:ShowComputeDomainQuotas',
+    'service_compute_domain-quotas_update = vinfraclient.cmd.compute.domain_quotas:UpdateComputeDomainQuotas',
     # compute k8saas
     'service_compute_k8saas_create = vinfraclient.cmd.compute.k8saas:CreateK8saasCluster',
     'service_compute_k8saas_delete = vinfraclient.cmd.compute.k8saas:DeleteK8saasCluster',
@@ -496,12 +517,31 @@ vinfra_cli_cmds = [
     'service_compute_vpn_connection_set = vinfraclient.cmd.compute.vpn:SetIPsecSiteConnection',
     'service_compute_vpn_connection_delete = vinfraclient.cmd.compute.vpn:DeleteIPsecSiteConnection',
     'service_compute_vpn_connection_restart = vinfraclient.cmd.compute.vpn:RestartIPsecSiteConnection',
+    # compute backup
+    'service_compute_backup_configure = vinfraclient.cmd.compute.cluster:ConfigureBackup',
+    'service_compute_backup_show = vinfraclient.cmd.compute.cluster:ShowBackup',
+    # compute ports
+    'service_compute_ports_list = vinfraclient.cmd.compute.ports:ListPorts',
+    'service_compute_ports_show = vinfraclient.cmd.compute.ports:ShowPort',
+    'service_compute_ports_set = vinfraclient.cmd.compute.ports:UpdatePort',
+    'service_compute_ports_delete = vinfraclient.cmd.compute.ports:DeletePort',
+    'service_compute_ports_create = vinfraclient.cmd.compute.ports:CreatePort',
+    # service filebeat
+    'service_filebeat_show = vinfraclient.cmd.filebeat:ShowFilebeat',
+    'service_filebeat_config_set = vinfraclient.cmd.filebeat:SetFilebeatConfig',
+    'service_filebeat_start = vinfraclient.cmd.filebeat:StartFilebeatService',
+    'service_filebeat_stop = vinfraclient.cmd.filebeat:StopFilebeatService',
+    'service_filebeat_restart = vinfraclient.cmd.filebeat:RestartFilebeatService',
+    'service_filebeat_enable = vinfraclient.cmd.filebeat:EnableFilebeatService',
+    'service_filebeat_disable = vinfraclient.cmd.filebeat:DisableFilebeatService',
     # s3 service
     'service_s3_show = vinfraclient.cmd.s3:ShowS3',
+    'service_s3_cluster_show = vinfraclient.cmd.s3:ShowS3',
     'service_s3_cluster_create = vinfraclient.cmd.s3:CreateCluster',
     'service_s3_cluster_change = vinfraclient.cmd.s3:ChangeCluster',
     'service_s3_cluster_delete = vinfraclient.cmd.s3:DeleteCluster',
     'service_s3_node_add = vinfraclient.cmd.s3:AddNode',
+    'service_s3_node_change = vinfraclient.cmd.s3:ChangeNode',
     'service_s3_node_release = vinfraclient.cmd.s3:ReleaseNode',
     'service_s3_replication_show = vinfraclient.cmd.s3:ShowS3GeoReplication',
     'service_s3_replication_show_token = vinfraclient.cmd.s3:ShowTokenS3GeoReplication',
@@ -544,14 +584,20 @@ vinfra_cli_cmds = [
     'service_backup_cluster_deploy-standalone = vinfraclient.cmd.abgw:CreateBackupService',
     'service_backup_cluster_deploy-reverse-proxy = vinfraclient.cmd.abgw:DeployReverseProxyBackupGateway',
     'service_backup_cluster_deploy-upstream = vinfraclient.cmd.abgw:DeployUpstreamBackupGateway',
-    'service_backup_cluster_turn-to-upstream = vinfraclient.cmd.abgw:TurnToUpstreamBackupGateway',
+    'service_backup_cluster_turn-into-upstream = vinfraclient.cmd.abgw:TurnIntoUpstreamBackupGateway',
     'service_backup_cluster_add-upstream = vinfraclient.cmd.abgw:AddNewUpstream',
+    'service_backup_cluster_rebalance = vinfraclient.cmd.abgw:Rebalance',
+    'service_backup_cluster_accounts_import = vinfraclient.cmd.abgw:ImportAccounts',
+    'service_backup_cluster_accounts_move = vinfraclient.cmd.abgw:MoveAccounts',
+    'service_backup_cluster_remove-upstream = vinfraclient.cmd.abgw:RemoveUpstream',
+    'service_backup_cluster_export-upstream = vinfraclient.cmd.abgw:ExportUpstream',
     'service_backup_cluster_process = vinfraclient.cmd.abgw:Process',
-    'service_backup_cluster_download-upstream-info = vinfraclient.cmd.abgw:DownloadUpstreamInfo',
-    'service_backup_cluster_create = vinfraclient.cmd.abgw:CreateBackupService',
     'service_backup_cluster_show = vinfraclient.cmd.abgw:ShowBackupService',
     'service_backup_cluster_renew-certificates = vinfraclient.cmd.deprecated:RenewBackupCertificates',
     'service_backup_cluster_release = vinfraclient.cmd.abgw:ReleaseBackupService',
+    'service_backup_cluster_restart-nodes = vinfraclient.cmd.abgw:RestartBackupNodes',
+    'service_backup_cluster_change-upstream = vinfraclient.cmd.abgw:ChangeUpstream',
+    'service_backup_cluster_upstream-only = vinfraclient.cmd.abgw:SetUpstreamOnly',
     # abgw client limits commands
     'service_backup_limits-params_show = vinfraclient.cmd.abgw:ShowClientLimits',
     'service_backup_limits-params_change = vinfraclient.cmd.abgw:ChangeLimitsParams',
@@ -571,6 +617,11 @@ vinfra_cli_cmds = [
     'service_backup_node_list = vinfraclient.cmd.abgw:ListNodes',
     'service_backup_node_release = vinfraclient.cmd.abgw:ReleaseNode',
 
+    # abgw throttling limit config commands
+    'service_backup_throttling_show = vinfraclient.cmd.abgw:ShowThrottlingConfig',
+    'service_backup_throttling_reset = vinfraclient.cmd.abgw:ResetThrottlingConfig',
+    'service_backup_throttling_set = vinfraclient.cmd.abgw:SetThrottlingConfig',
+
     # abgw registration commands
     'service_backup_registration_list = vinfraclient.cmd.abgw.registrations:ListAbgwRegistration',
     'service_backup_registration_show = vinfraclient.cmd.abgw.registrations:ShowAbgwRegistration',
@@ -580,6 +631,8 @@ vinfra_cli_cmds = [
     'service_backup_registration_add-true-image = vinfraclient.cmd.abgw.registrations:CreateAbgwTrueImageRegistration',
     'service_backup_registration_renew-true-image-certs = vinfraclient.cmd.abgw.registrations:RenewTrueImageCertificates',
     'service_backup_registration_delete = vinfraclient.cmd.abgw.registrations:DeleteAbgwRegistration',
+    'service_backup_registration_export = vinfraclient.cmd.abgw.registrations:ExportRegistration',
+    'service_backup_registration_import = vinfraclient.cmd.abgw.registrations:ImportRegistrations',
 
     # abgw geo-replication info commands
     'service_backup_geo-replication_show = vinfraclient.cmd.abgw.georeplication:ShowGeoReplicationInfo',
@@ -614,6 +667,7 @@ vinfra_cli_cmds = [
     'software-updates_eligibility-check = vinfraclient.cmd.software_updates:SoftwareUpdatesEligibilityCheck',
     'software-updates_pause = vinfraclient.cmd.software_updates:SoftwareUpdatesPause',
     'software-updates_cancel = vinfraclient.cmd.software_updates:SoftwareUpdatesCancel',
+    'software-updates_reset = vinfraclient.cmd.software_updates:SoftwareUpdatesReset',
 
     # tasks
     'task_list = vinfraclient.cmd.task:ListTask',
@@ -670,9 +724,17 @@ vinfra_cli_cmds = [
     # CsConfig - For enable/disable RDMA
     "cses-config_show = vinfraclient.cmd.settings:ShowCsConfig",
     "cses-config_change = vinfraclient.cmd.settings:ChangeCsConfig",
+    "cluster_ha_switch-primary = vinfraclient.cmd.ha:HaSwitchPrimary",
+
+    # Notification forwarding
+    "service_compute_notification_set = vinfraclient.cmd.compute.cluster:SetNotification",
+    "service_compute_notification_disable = vinfraclient.cmd.compute.cluster:DisableNotification",
+    "service_compute_notification_show = vinfraclient.cmd.compute.cluster:ShowNotification",
 ]
 
 vinfra_cli_cmds_hidden = [
+    'service_compute_domain-quotas_show = vinfraclient.cmd.compute.domain_quotas:ShowComputeDomainQuotas',
+    'service_compute_domain-quotas_update = vinfraclient.cmd.compute.domain_quotas:UpdateComputeDomainQuotas',
     'service_compute_k8saas_workergroup_upgrade = vinfraclient.cmd.compute.k8saas:UpgradeK8saasWorkerGroup',
     'service_compute_k8saas_health = vinfraclient.cmd.compute.k8saas:ShowK8saasClusterHealth',
     'service_compute_stacks_create = vinfraclient.cmd.compute.stacks:CreateStack',
@@ -694,12 +756,23 @@ vinfra_cli_cmds_hidden = [
     'service_backup_geo-replication_slave_promote-to-primary = vinfraclient.cmd.abgw.georeplication:GeoReplicationSecondaryPromoteToPrimary',
     'service_backup_geo-replication_slave_cancel = vinfraclient.cmd.abgw.georeplication:GeoReplicationSecondaryCancel',
     # abgw sysinfo config commands
+    'service_backup_cluster_create = vinfraclient.cmd.abgw:CreateBackupService',
     'service_backup_monitoring_show = vinfraclient.cmd.abgw:ShowSysinfoConfig',
     'service_backup_monitoring_disable = vinfraclient.cmd.abgw:DisableSysinfoConfig',
     'service_backup_monitoring_enable = vinfraclient.cmd.abgw:EnableSysinfoConfig',
     'service_backup_monitoring_update = vinfraclient.cmd.abgw:UpdateSysinfoConfig',
     # cluster license
     'cluster_license_spla-unregister = vinfraclient.cmd.license.acronis:UnregisterSPLALicense',
+    # filebeat feature
+    'service_filebeat_show = vinfraclient.cmd.filebeat:ShowFilebeat',
+    'service_filebeat_config_set = vinfraclient.cmd.filebeat:SetFilebeatConfig',
+    'service_filebeat_start = vinfraclient.cmd.filebeat:StartFilebeatService',
+    'service_filebeat_stop = vinfraclient.cmd.filebeat:StopFilebeatService',
+    'service_filebeat_restart = vinfraclient.cmd.filebeat:RestartFilebeatService',
+    'service_filebeat_enable = vinfraclient.cmd.filebeat:EnableFilebeatService',
+    'service_filebeat_disable = vinfraclient.cmd.filebeat:DisableFilebeatService',
+    # TODO: move to vinfra_cli_cmds after validated by QA
+    'cluster_ha_switch-primary = vinfraclient.cmd.ha:HaSwitchPrimary',
 ]
 
 if vendor == VENDOR_VIRTUOZZO:

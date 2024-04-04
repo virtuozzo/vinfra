@@ -93,6 +93,16 @@ def _format_disk(disk, formatter):
             if formatter == 'table':
                 new_info[attr] = sizeof_fmt(new_info[attr])
 
+    service_id = []
+    if getattr(disk, 'metadata_server', None):
+        service_id.append(disk.metadata_server['id'])
+
+    for chunk_server in getattr(disk, 'chunk_servers', []):
+        service_id.append(chunk_server['id'])
+
+    if service_id:
+        new_info['service_id'] = service_id
+
     if formatter == 'table':
         if unavail:
             physical_size = service_params = 'unavail'
@@ -104,6 +114,8 @@ def _format_disk(disk, formatter):
             'service_params': service_params,
             'physical_size': physical_size,
         })
+        if new_info.get('service_id'):
+            new_info['service_id'] = ','.join(map(str, new_info['service_id']))
 
     disk.set_info(new_info)
     return disk
@@ -123,6 +135,7 @@ class ListDisk(base.Lister):
         'id', 'device', 'type', 'role', 'disk_status', 'used', 'size', 'physical_size',
         'service_id', 'service_status',
     ]
+
     def configure_parser(self, parser):
         required = node_utils.is_remove_client()
         node_group = parser.add_mutually_exclusive_group(required=required)

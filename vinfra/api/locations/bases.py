@@ -10,8 +10,8 @@ class BaseResource(base.Resource):
         pass
 
     @classmethod
-    def schema(cls, strict=True):
-        return cls.Schema(strict=strict)
+    def schema(cls):
+        return cls.Schema()
 
     # pylint: disable=super-init-not-called
     # noinspection PyMissingConstructor
@@ -24,7 +24,8 @@ class BaseResource(base.Resource):
         return "<{} {}>".format(self.__class__.__name__, attrs)
 
     def set_info(self, info):
-        self.__dict__.update(self.schema().load(info).data)
+        data = self.schema().load(info)
+        self.__dict__.update(data)
 
     def _update_info(self, info):
         for k in self.schema().fields:
@@ -37,4 +38,5 @@ class BaseResource(base.Resource):
         return self
 
     def to_dict(self):
-        return self.schema().dump(self).data
+        data = self.schema().dump(self)
+        return data
